@@ -1,0 +1,20 @@
+---
+- name: make vm for test app on proxmox
+  hosts: '{{ hosts | default("all") }}'
+  remote_user: root
+  gather_facts: no
+  become: yes
+  become_user: root
+  become_method: sudo
+
+  vars:
+    ansible_user: '{{ lookup("env","ANSIBLE_USER") }}'
+    ansible_pass: '{{ lookup("env","ANSIBLE_PASS") }}'
+
+    proxmox_user: '{{ lookup("env","PROXMOX_USER") }}'
+    proxmox_pass: '{{ lookup("env","PROXMOX_PASS") }}'
+    proxmox_host: '{{ lookup("env","PROXMOX_HOST") }}'
+    proxmox_node: '{{ lookup("env","PROXMOX_NODE") }}'
+
+  roles:
+    - proxmox

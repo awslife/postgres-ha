@@ -1,0 +1,237 @@
+---
+- name: stop vm forcefully
+  shell: ssh -o StrictHostKeyChecking=no root@{{ proxmox_host }} "qm stop {{ newid }} -skiplock true"
+  ignore_errors: yes
+  delegate_to: localhost
+  tags:
+    - stop
+
+- name: stop vm
+  proxmox_kvm:
+    api_user: "{{ proxmox_user }}"
+    api_password: "{{ proxmox_pass }}"
+    api_host: "{{ proxmox_host }}"
+    vmid: '{{ newid }}'
+    state: stopped
+  ignore_errors: yes
+  delegate_to: localhost
+  tags:
+    - stop
+
+- name: gather old mac addr
+  shell: ssh -o StrictHostKeyChecking=no root@{{ proxmox_host }} 'qm config {{ newid }} | grep ^net0 | cut -d"=" -f2 | sed "s/,bridge//"'
+  register: mac_addr
+  delegate_to: localhost
+  ignore_errors: yes
+  notify:
+    - unlease old mac for dhcp in dnsmasq
+    - delete old mac for dhcp in dnsmasq
+    - delete old hostname for dns in dnsmasq
+  tags:
+    - delete
+
+- name: force all notified handlers to run about remove
+  meta: flush_handlers
+
+- name: remove vm
+  proxmox_kvm:
+    api_user: "{{ proxmox_user }}"
+    api_password: "{{ proxmox_pass }}"
+    api_host: "{{ proxmox_host }}"
+    name: '{{ inventory_hostname }}'
+    node: '{{ proxmox_node }}'
+    state: absent
+  ignore_errors: yes
+  delegate_to: localhost
+  notify:
+    - unlease old mac for dhcp in dnsmasq
+    - delete old mac for dhcp in dnsmasq
+    - delete old hostname for dns in dnsmasq
+  tags:
+    - delete
+
+- name: force all notified handlers to run about remove
+  meta: flush_handlers
+
+- name: restart dnsmasq
+  systemd:
+    state: restarted
+    daemon_reload: yes
+    name: dnsmasq
+  delegate_to: '{{ bootstrap_host }}'
+  run_once: true
+  become: yes
+  become_method: sudo
+  tags:
+    - delete
+
+- name: clone vm
+  proxmox_kvm:
+    api_user: "{{ proxmox_user }}"
+    api_password: "{{ proxmox_pass }}"
+    api_host: "{{ proxmox_host }}"
+    node: '{{ proxmox_node }}'
+    clone: "{{ tmpl }}"
+    vmid: '{{ vmid }}'
+    newid: '{{ newid }}'
+    name: '{{ inventory_hostname }}'
+    storage: '{{ storage }}'
+    timeout: '600'
+    state: present
+  delegate_to: localhost
+  notify:
+  tags:
+    - create
+
+- name: wait for clone vm
+  wait_for:
+    timeout: 10
+  run_once: true
+  delegate_to: localhost
+  tags:
+    - wait
+
+- name: gather new mac addr
+  shell: ssh -o StrictHostKeyChecking=no root@{{ proxmox_host }} 'qm config {{ newid }} | grep ^net0 | cut -d"=" -f2 | sed "s/,bridge//"'
+  register: mac_addr
+  delegate_to: localhost
+  notify:
+    - set mac for dhcp in dnsmasq
+    - set hostname for dns in dnsmasq
+  tags:
+    - create
+
+- name: force all notified handlers to run about remove
+  meta: flush_handlers
+
+- name: update vm
+  proxmox_kvm:
+    api_user: "{{ proxmox_user }}"
+    api_password: "{{ proxmox_pass }}"
+    api_host: "{{ proxmox_host }}"
+    name: '{{ inventory_hostname }}'
+    node: '{{ proxmox_node }}'
+    cores: '{{ cores }}'
+    memory: '{{ memory }}'
+    update: yes
+  delegate_to: localhost
+  notify:
+    - set mac for dhcp in dnsmasq
+    - set hostname for dns in dnsmasq
+  tags:
+    - create
+
+- name: change boot order and autostart
+  shell: ssh root@{{ proxmox_host }} 'qm set {{ newid }} --onboot "0" --boot "order=scsi0;net0;net1"'
+  delegate_to: localhost
+  tags:
+    - create
+
+- name: force all notified handlers to run about remove
+  meta: flush_handlers
+
+- name: restart dnsmasq
+  systemd:
+    state: restarted
+    daemon_reload: yes
+    name: dnsmasq
+  delegate_to: '{{ bootstrap_host }}'
+  run_once: true
+  become: yes
+  become_method: sudo
+  tags:
+    - create
+
+- name: wait for restart dnsmasq
+  wait_for:
+    timeout: 3
+  run_once: true
+  delegate_to: localhost
+  tags:
+    - wait
+
+- name: start vm
+  proxmox_kvm:
+    api_user: "{{ proxmox_user }}"
+    api_password: "{{ proxmox_pass }}"
+    api_host: "{{ proxmox_host }}"
+    vmid: '{{ newid }}'
+    state: started
+  delegate_to: localhost
+  tags:
+    - start
+
+- name: wait for connection to be installed os
+  wait_for_connection:
+    sleep: 3
+    connect_timeout: 3
+    timeout: 1800
+  tags:
+    - wait
+
+- name: sleep for cluster to be ready
+  wait_for:
+    port: 22
+    state: started
+    timeout: 600
+  tags:
+    - wait
+
+- name: set hostname
+  hostname:
+    name: '{{ inventory_hostname }}'
+  tags:
+    - hostname
+
+- name: Disable swap for current session
+  shell: |
+    swapoff -a
+    rm -f /swapfile
+  tags:
+    - swap
+
+- name: Disable swap permanently, persist reboots
+  replace:
+    path: /etc/fstab
+    regexp: '^(\s*)([^#\n]+\s+)(\w+\s+)swap(\s+.*)$'
+    replace: '#\1\2\3swap\4'
+    backup: yes
+  tags:
+    - swap
+
+- name: stop loal dns service
+  systemd:
+    name: systemd-resolved
+    state: stopped
+    enabled: no
+  tags:
+    - dns
+
+- name: copy dns file
+  template:
+    src: dns/resolv.conf
+    dest: /etc/resolv.conf
+  tags:
+    - dns
+
+- name: update apt cache
+  apt:
+    update_cache: yes
+  tags:
+    - package
+
+- name: install default packages
+  apt:
+    name:
+      - sshpass
+      - gpg-agent
+      - vim
+    state: present
+  tags:
+    - package
+
+- name: reboot cluster
+  reboot:
+    reboot_timeout: 180
+  tags:
+    - reboot

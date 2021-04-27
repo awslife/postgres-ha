@@ -1,0 +1,7 @@
+---
+api_user: "{{ lookup('env', 'API_USER') }}"
+api_password: "{{ lookup('env', 'API_PASSWORD') }}"
+api_host: "{{ lookup('env', 'API_HOST') }}"
+key_name: "{{ lookup('env', 'DNS_KEY') }}"
+key_secret: "{{ lookup('env', 'DNS_SECRET') }}"
+server: "{{ lookup('env', 'DNS_SERVER') }}"

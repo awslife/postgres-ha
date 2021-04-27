@@ -1,0 +1,39 @@
+[ALL]
+pgp1 newid=181 ip=10.0.0.181
+pgp2 newid=182 ip=10.0.0.182
+postgres1 newid=183 ip=10.0.0.183
+postgres2 newid=184 ip=10.0.0.184
+
+[PGP]
+pgp1
+pgp2
+
+[POSTGRES]
+postgres1
+postgres2
+
+[all:vars]
+vmid=102
+
+storage=synodata
+
+bootstrap_host=10.0.0.1
+
+dns1_ip="10.0.0.1"
+dns2_ip="1.1.1.1"
+dns3_ip="8.8.8.8"
+dns_domain=homelab.local
+
+postgres_version=12
+
+[PGP:vars]
+tmpl=DEFAULT
+
+cores=2
+memory=4096
+
+[POSTGRES:vars]
+tmpl=DEFAULT-EXT
+
+cores=4
+memory=8192

@@ -1,0 +1,55 @@
+---
+- name: unlease old mac for dhcp in dnsmasq
+  lineinfile:
+    path: /var/lib/misc/dnsmasq.leases
+    regexp: '.*{{ mac_addr.stdout | lower }}.*'
+    state: absent
+  delegate_to: '{{ bootstrap_host }}'
+  become: yes
+  become_method: sudo
+  tags:
+    - dhcp_delete
+
+- name: delete old mac for dhcp in dnsmasq
+  lineinfile:
+    path: /etc/ethers
+    regexp: '.*{{ ip }}$'
+    state: absent
+  delegate_to: '{{ bootstrap_host }}'
+  become: yes
+  become_method: sudo
+  tags:
+    - dhcp_delete
+
+- name: set mac for dhcp in dnsmasq
+  lineinfile:
+    path: /etc/ethers
+    line: '{{ mac_addr.stdout | lower }} {{ ip }}'
+    state: present
+  delegate_to: '{{ bootstrap_host }}'
+  become: yes
+  become_method: sudo
+  tags:
+    - dhcp_update
+
+- name: delete old hostname for dns in dnsmasq
+  lineinfile:
+    path: /etc/hosts
+    regexp: '.*{{ inventory_hostname }}.*$'
+    state: absent
+  delegate_to: '{{ bootstrap_host }}'
+  become: yes
+  become_method: sudo
+  tags:
+    - dns_delete
+
+- name: set hostname for dns in dnsmasq
+  lineinfile:
+    path: /etc/hosts
+    line: '{{ ip }} {{ inventory_hostname }}.{{ dns_domain }} {{ inventory_hostname }}'
+    state: present
+  delegate_to: '{{ bootstrap_host }}'
+  become: yes
+  become_method: sudo
+  tags:
+    - dns_update

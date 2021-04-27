@@ -1,0 +1,104 @@
+---
+- name: Add an postgres apt signing key
+  apt_key:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    state: present
+  tags:
+  - postgres_key
+
+- apt_repository:
+    repo: deb http://apt.postgresql.org/pub/repos/apt bionic-pgdg main
+    filename: postgres
+    state: present
+  tags:
+  - postgres_repository
+
+- name: Update repositories cache and install packages
+  apt:
+    name:
+      - postgresql-{{ postgres_version}}
+      - postgresql-client-{{ postgres_version}}
+      - xfsprogs
+    update_cache: yes
+  tags:
+  - postgres_apt
+
+- name: Stop postgresql server
+  systemd:
+    name: postgresql
+    state: stopped
+  tags:
+  - postgres_stop
+
+- name: Create a data directory
+  file:
+    path: '{{ item.dir }}'
+    state: directory
+    mode: 0755
+  with_items:
+    - { dir: '/data1' }
+    - { dir: '/var/lib/postgresql/backup/' }
+  tags:
+  - make_fsdir
+
+- name: Create a new data partition
+  parted:
+    device: /dev/sdb
+    number: 1
+    state: present
+  tags:
+  - parted_data
+
+- name: Create a xfs filesystem on /dev/sdb1
+  filesystem:
+    fstype: xfs
+    dev: /dev/sdb1
+    force: yes
+  tags:
+  - fs_xfs
+
+- name: Mount and bind a volume
+  mount:
+    path: /data1
+    src: /dev/sdb1
+    state: mounted
+    fstype: xfs
+  tags:
+  - fs_xfs
+
+- name: Move postgresql data to new location
+  shell: |
+    rsync -av /var/lib/postgresql /data1/
+  tags:
+  - postgres_dir
+
+- name: Backup postgresql data
+  shell: |
+    mv /var/lib/postgresql/{{ postgres_version }}/main /var/lib/postgresql/backup/
+  tags:
+  - postgres_dir
+
+- name: Change data folder to new location
+  replace:
+    path: /etc/postgresql/{{ postgres_version }}/main/postgresql.conf
+    regexp: '^data_directory = .*$'
+    replace: 'data_directory = /data1/postgresql/{{ postgres_version }}/main'
+  tags:
+  - postgres_dir
+
+- name: Start postgresql server
+  systemd:
+    name: postgresql
+    state: started
+  tags:
+  - postgres_start
+
+- name: Delete a backup directory
+  file:
+    path: '{{ item.dir }}'
+    state: directory
+    mode: 0755
+  with_items:
+    - { dir: '/var/lib/postgresql/backup/' }
+  tags:
+  - del_fsdir
