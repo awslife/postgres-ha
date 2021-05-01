@@ -13,8 +13,6 @@ postgres1
 postgres2
 
 [all:vars]
-vmid=102
-
 storage=synodata
 
 bootstrap_host=10.0.0.1
@@ -25,15 +23,20 @@ dns3_ip="8.8.8.8"
 dns_domain=homelab.local
 
 postgres_version=12
+postgres_pgdata=/data1/pgsql/data
+postgres_pgbackup=/data1/pgsql/backup
+postgres_pgarchivelog=/data1/pgsql/archivelog
 
 [PGP:vars]
-tmpl=DEFAULT
+vmid=103
+tmpl=DEFAULT-BIOS
 
 cores=2
 memory=4096
 
 [POSTGRES:vars]
-tmpl=DEFAULT-EXT
+vmid=104
+tmpl=DEFAULT-EXT-BIOS
 
 cores=4
 memory=8192

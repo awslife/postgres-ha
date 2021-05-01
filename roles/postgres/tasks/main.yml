@@ -1,55 +1,71 @@
 ---
-- name: Add an postgres apt signing key
-  apt_key:
-    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
-    state: present
+- name: wait for connection to be installed os
+  wait_for_connection:
+    timeout: 900
   tags:
-  - postgres_key
+  - wait
 
-- apt_repository:
-    repo: deb http://apt.postgresql.org/pub/repos/apt bionic-pgdg main
-    filename: postgres
-    state: present
+- name: sleep for cluster to be ready
+  wait_for:
+    port: 22
+    state: started
+    timeout: 1800
   tags:
-  - postgres_repository
+  - wait
 
-- name: Update repositories cache and install packages
-  apt:
+- name: set hostname
+  hostname:
+    name: '{{ inventory_hostname }}'
+  tags:
+  - hostname
+
+- name: Disable swap for current session
+  shell: |
+    swapoff -a
+    rm -f /swapfile
+  tags:
+  - swap
+
+- name: Disable swap permanently, persist reboots
+  replace:
+    path: /etc/fstab
+    regexp: '^(\s*)([^#\n]+\s+)(\w+\s+)swap(\s+.*)$'
+    replace: '#\1\2\3swap\4'
+    backup: yes
+  tags:
+  - swap
+
+- name: copy dns file
+  template:
+    src: dns/resolv.conf
+    dest: /etc/resolv.conf
+  tags:
+  - dns
+
+- name: install the postgres repository rpm from a remote repo
+  yum:
+    name: https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+  tags:
+  - postgres_yum
+
+- name: install postgres server and client
+  yum:
     name:
-      - postgresql-{{ postgres_version}}
-      - postgresql-client-{{ postgres_version}}
-      - xfsprogs
-    update_cache: yes
+    - postgresql{{ postgres_version }}
+    - postgresql{{ postgres_version }}-server
+    state: present
   tags:
-  - postgres_apt
+  - postgres_install
 
-- name: Stop postgresql server
-  systemd:
-    name: postgresql
-    state: stopped
-  tags:
-  - postgres_stop
-
-- name: Create a data directory
-  file:
-    path: '{{ item.dir }}'
-    state: directory
-    mode: 0755
-  with_items:
-    - { dir: '/data1' }
-    - { dir: '/var/lib/postgresql/backup/' }
-  tags:
-  - make_fsdir
-
-- name: Create a new data partition
+- name: create a new data partition
   parted:
     device: /dev/sdb
     number: 1
     state: present
   tags:
-  - parted_data
+  - fs_xfs
 
-- name: Create a xfs filesystem on /dev/sdb1
+- name: create a xfs filesystem on /dev/sdb1
   filesystem:
     fstype: xfs
     dev: /dev/sdb1
@@ -57,7 +73,7 @@
   tags:
   - fs_xfs
 
-- name: Mount and bind a volume
+- name: mount and bind a volume
   mount:
     path: /data1
     src: /dev/sdb1
@@ -66,39 +82,64 @@
   tags:
   - fs_xfs
 
-- name: Move postgresql data to new location
-  shell: |
-    rsync -av /var/lib/postgresql /data1/
-  tags:
-  - postgres_dir
-
-- name: Backup postgresql data
-  shell: |
-    mv /var/lib/postgresql/{{ postgres_version }}/main /var/lib/postgresql/backup/
-  tags:
-  - postgres_dir
-
-- name: Change data folder to new location
-  replace:
-    path: /etc/postgresql/{{ postgres_version }}/main/postgresql.conf
-    regexp: '^data_directory = .*$'
-    replace: 'data_directory = /data1/postgresql/{{ postgres_version }}/main'
-  tags:
-  - postgres_dir
-
-- name: Start postgresql server
+- name: stop postgresql server
   systemd:
-    name: postgresql
-    state: started
+    name: postgresql-{{ postgres_version }}
+    daemon_reload: yes
+    state: stopped
+  ignore_errors: yes
   tags:
-  - postgres_start
+  - postgres_stop
 
-- name: Delete a backup directory
+- name: delete old postgresql data
   file:
     path: '{{ item.dir }}'
-    state: directory
-    mode: 0755
+    state: absent
   with_items:
-    - { dir: '/var/lib/postgresql/backup/' }
+  - { dir: '/var/lib/pgsql/{{ postgres_version }}/data' }
+  - { dir: '/var/lib/pgsql/{{ postgres_version }}/backup' }
+  - { dir: '{{ postgres_pgdata }}' }
+  - { dir: '{{ postgres_pgbackup }}' }
+  - { dir: '{{ postgres_pgarchivelog }}' }
   tags:
-  - del_fsdir
+  - postgres_dir
+
+- name: create data directory
+  file:
+    path: '{{ item.dir }}'
+    owner: postgres
+    group: postgres
+    mode: 0755
+    state: directory
+  with_items:
+  - { dir: '{{ postgres_pgdata }}' }
+  - { dir: '{{ postgres_pgbackup }}' }
+  - { dir: '{{ postgres_pgarchivelog }}' }
+  tags:
+  - postgres_dir
+
+- name: initialize database
+  shell: |
+    /usr/pgsql-{{ postgres_version }}/bin/postgresql-{{ postgres_version }}-setup initdb
+  environment:
+    PGSETUP_INITDB_OPTIONS: "-D {{ postgres_pgdata }}"
+  register: result
+  failed_when: result.rc > 1
+  tags:
+  - postgres_init
+
+- name: change pgdata to new location in service file
+  replace:
+    path: /usr/lib/systemd/system/postgresql-{{ postgres_version }}.service
+    regexp: '^Environment=PGDATA=/var/lib/pgsql/{{ postgres_version }}/data/'
+    replace: 'Environment=PGDATA={{ postgres_pgdata }}/'
+  tags:
+  - postgres_service
+
+- name: start postgresql server
+  systemd:
+    name: postgresql-{{ postgres_version }}
+    daemon_reload: yes
+    state: started
+  tags:
+  - postgres_service
