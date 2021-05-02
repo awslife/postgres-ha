@@ -23,6 +23,7 @@ dns3_ip="8.8.8.8"
 dns_domain=homelab.local
 
 postgres_version=12
+postgres_password=changeme
 postgres_pgdata=/data1/pgsql/data
 postgres_pgbackup=/data1/pgsql/backup
 postgres_pgarchivelog=/data1/pgsql/archivelog

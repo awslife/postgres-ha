@@ -51,6 +51,8 @@
 - name: install postgres server and client
   yum:
     name:
+    - vim
+    - sshpass
     - postgresql{{ postgres_version }}
     - postgresql{{ postgres_version }}-server
     state: present
@@ -136,10 +138,70 @@
   tags:
   - postgres_service
 
+- name: change postgres's home directory
+  user:
+    name: postgres
+    home: '{{ postgres_pgdata }}'
+    password: '{{ postgres_password | password_hash("sha512") }}'
+    create_home: no
+    move_home: yes
+    state: present
+  tags:
+  - postgres_user
+
+- name: generate ssh key for connecting without asking password
+  shell: |
+    ssh-keygen -q -t rsa -N '' -f {{ postgres_pgdata }}/.ssh/id_rsa <<< y
+  become_user: postgres
+  tags:
+  - postgres_user
+
+- name: copy ssh key
+  shell: |
+    sshpass -p{{ postgres_password }} ssh-copy-id -o StrictHostKeyChecking=no postgres@postgres1
+    sshpass -p{{ postgres_password }} ssh-copy-id -o StrictHostKeyChecking=no postgres@postgres2
+  become_user: postgres
+  tags:
+  - postgres_user
+
 - name: start postgresql server
   systemd:
     name: postgresql-{{ postgres_version }}
     daemon_reload: yes
     state: started
   tags:
-  - postgres_service
+  - postgres_start
+
+- name: change listen address to all
+  shell: |
+    psql -c "ALTER SYSTEM SET listen_addresses TO '*';"
+  become_user: postgres
+  tags:
+  - postgres_config
+
+- name: create replication user
+  shell: |
+    psql -c "DROP USER IF EXISTS replica_user; CREATE USER replica_user WITH REPLICATION ENCRYPTED PASSWORD '{{ postgres_password }}';"
+  become_user: postgres
+  when: inventory_hostname == groups['POSTGRES'][0]
+  tags:
+  - postgres_replica
+
+- name: add connection info to pg_hba
+  lineinfile:
+    path: '{{ postgres_pgdata }}/pg_hba.conf'
+    line: 'host    replication    replica_user   {{ hostvars[groups["POSTGRES"][1]].ip }}/32    trust'
+    state: present
+  become_user: postgres
+  when: inventory_hostname == groups['POSTGRES'][0]
+  tags:
+  - postgres_replica
+
+- name: reload postgres config
+  shell: |
+    psql -c "SELECT pg_reload_conf();"
+  become_user: postgres
+  tags:
+  - postgres_config
+  - postgres_replica
+
