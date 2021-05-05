@@ -4,7 +4,7 @@ pgp2 newid=182 ip=10.0.0.182
 postgres1 newid=183 ip=10.0.0.183
 postgres2 newid=184 ip=10.0.0.184
 
-[PGP]
+[PGP2]
 pgp1
 pgp2
 
@@ -15,20 +15,20 @@ postgres2
 [all:vars]
 storage=synodata
 
-bootstrap_host=10.0.0.1
-
-dns1_ip="10.0.0.1"
-dns2_ip="1.1.1.1"
-dns3_ip="8.8.8.8"
 dns_domain=homelab.local
 
 postgres_version=12
-postgres_password=changeme
-postgres_pgdata=/data1/pgsql/data
-postgres_pgbackup=/data1/pgsql/backup
-postgres_pgarchivelog=/data1/pgsql/archivelog
 
-[PGP:vars]
+postgres_user_home=/data1/pgsql
+postgres_user_pass=changeme
+
+postgres_replica_user=replica_user
+postgres_replica_pass=changeme
+
+postgres_pgp2_user=pgp2_user
+postgres_pgp2_pass=changeme
+
+[PGP2:vars]
 vmid=103
 tmpl=DEFAULT-BIOS
 

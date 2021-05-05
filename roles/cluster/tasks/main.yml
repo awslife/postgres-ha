@@ -1,0 +1,73 @@
+---
+- name: wait for connection to be installed os
+  wait_for_connection:
+    sleep: 3
+    connect_timeout: 1
+    timeout: 1800
+  tags:
+    - wait
+
+- name: sleep for cluster to be ready
+  wait_for:
+    port: 22
+    state: started
+    timeout: 600
+  tags:
+    - wait
+
+- name: set hostname
+  hostname:
+    name: '{{ inventory_hostname }}'
+  tags:
+  - hostname
+
+- name: Disable swap for current session
+  shell: |
+    swapoff -a
+    rm -f /swapfile
+  tags:
+  - swap
+
+- name: Disable swap permanently, persist reboots
+  replace:
+    path: /etc/fstab
+    regexp: '^(\s*)([^#\n]+\s+)(\w+\s+)swap(\s+.*)$'
+    replace: '#\1\2\3swap\4'
+    backup: yes
+  tags:
+  - swap
+
+- name: copy dns file
+  template:
+    src: dns/resolv.conf
+    dest: /etc/resolv.conf
+  tags:
+  - dns
+
+- name: create a new data partition
+  parted:
+    device: /dev/sdb
+    number: 1
+    state: present
+  when: inventory_hostname in groups['POSTGRES']
+  tags:
+  - fs_xfs
+
+- name: create a xfs filesystem on /dev/sdb1
+  filesystem:
+    fstype: xfs
+    dev: /dev/sdb1
+    force: yes
+  when: inventory_hostname in groups['POSTGRES']
+  tags:
+  - fs_xfs
+
+- name: mount and bind a volume
+  mount:
+    path: /data1
+    src: /dev/sdb1
+    state: mounted
+    fstype: xfs
+  when: inventory_hostname in groups['POSTGRES']
+  tags:
+  - fs_xfs

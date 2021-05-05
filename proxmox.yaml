@@ -1,8 +1,8 @@
 ---
 - name: make vm for test app on proxmox
   hosts: '{{ hosts | default("all") }}'
-  remote_user: root
   gather_facts: no
+  remote_user: root
 
   vars:
     ansible_user: '{{ lookup("env","ANSIBLE_USER") }}'

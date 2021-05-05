@@ -1,6 +1,6 @@
 ---
 - name: install postgresql server
-  hosts: '{{ hosts | default("POSTGRES") }}'
+  hosts: '{{ hosts | default("PGP2") }}'
   gather_facts: yes
   become: yes
   become_user: root
@@ -11,4 +11,4 @@
     ansible_pass: '{{ lookup("env","ANSIBLE_PASS") }}'
 
   roles:
-    - postgres
+    - pgp2

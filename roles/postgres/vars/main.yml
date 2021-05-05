@@ -1,2 +1,4 @@
 ---
-# vars file for postgres
+postgres_pgdata: /data1/pgsql/12/data
+postgres_pgbackup: /data1/pgsql/12/backup
+postgres_pgarchivelog: /data1/pgsql/12/archivelog

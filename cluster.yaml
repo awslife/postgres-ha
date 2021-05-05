@@ -1,7 +1,7 @@
 ---
-- name: install postgresql server
-  hosts: '{{ hosts | default("POSTGRES") }}'
-  gather_facts: yes
+- name: config postgres cluster
+  hosts: '{{ hosts | default("all") }}'
+  gather_facts: no
   become: yes
   become_user: root
   become_method: sudo
@@ -11,4 +11,4 @@
     ansible_pass: '{{ lookup("env","ANSIBLE_PASS") }}'
 
   roles:
-    - postgres
+    - cluster
