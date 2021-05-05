@@ -127,12 +127,11 @@
   tags:
   - pgp2_config
 
-- name: change pghome in shell file
+- name: change env in failover shell file
   replace:
     path: '{{ item.path }}'
     regexp: '{{ item.regexp }}'
     replace: '{{ item.replace }}'
-  become_user: postgres
   with_items:
   - { path: '/etc/pgpool-II/failover.sh', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
   - { path: '/etc/pgpool-II/follow_primary.sh', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
@@ -148,3 +147,36 @@
   become_user: postgres
   tags:
   - pgp2_config
+
+- name: copy online recovery shell file
+  copy:
+    src: '{{ item.src }}'
+    dest: '{{ item.dest }}'
+    owner: postgres
+    group: postgres
+    mode: 0755
+    remote_src: yes
+  with_items:
+  - { src: '/etc/pgpool-II/recovery_1st_stage.sample', dest: '/var/lib/pgsql/{{ postgres_version }}/data/recovery_1st_stage' }
+  - { src: '/etc/pgpool-II/pgpool_remote_start.sample', dest: '/var/lib/pgsql/{{ postgres_version }}/data/pgpool_remote_start' }
+  tags:
+  - pgp2_config
+
+- name: change envs in online recovery shell file
+  replace:
+    path: '{{ item.path }}'
+    regexp: '{{ item.regexp }}'
+    replace: '{{ item.replace }}'
+  with_items:
+  - { path: '/var/lib/pgsql/{{ postgres_version }}/data/recovery_1st_stage', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
+  - { path: '/var/lib/pgsql/{{ postgres_version }}/data/recovery_1st_stage', regexp: '^REPLUSER=repl', replace: 'REPLUSER={{ postgres_replica_user }}' }
+  - { path: '/var/lib/pgsql/{{ postgres_version }}/data/pgpool_remote_start', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
+  tags:
+  - pgp2_config
+
+# - name: create recovery extension for online recovery
+#   shell: |
+#     psql template1 -c "CREATE EXTENSION pgpool_recovery"
+#   become_user: postgres
+#   tags:
+#   - pgp2_config

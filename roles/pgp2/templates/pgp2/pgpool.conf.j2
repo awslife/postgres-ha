@@ -580,14 +580,14 @@ search_primary_node_timeout = 5min
 # ONLINE RECOVERY
 #------------------------------------------------------------------------------
 
-recovery_user = 'nobody'
+recovery_user = '{{ postgres_user_name }}'
                                    # Online recovery user
-recovery_password = ''
+recovery_password = '{{ postgres_user_pass }}'
                                    # Online recovery password
                                    # Leaving it empty will make Pgpool-II to first look for the
                                    # Password in pool_passwd file before using the empty password
 
-recovery_1st_stage_command = ''
+recovery_1st_stage_command = 'recovery_1st_stage'
                                    # Executes a command in first stage
 recovery_2nd_stage_command = ''
                                    # Executes a command in second stage

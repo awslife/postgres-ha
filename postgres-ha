@@ -20,6 +20,7 @@ dns_domain=homelab.local
 postgres_version=12
 
 postgres_user_home=/data1/pgsql
+postgres_user_name=postgres
 postgres_user_pass=changeme
 
 postgres_replica_user=replica_user
