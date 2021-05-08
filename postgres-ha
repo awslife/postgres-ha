@@ -1,35 +1,41 @@
 [ALL]
-pgp1 newid=181 ip=10.0.0.181
-pgp2 newid=182 ip=10.0.0.182
-postgres1 newid=183 ip=10.0.0.183
-postgres2 newid=184 ip=10.0.0.184
+postgres1 newid=181 ip=10.0.0.181
+postgres2 newid=182 ip=10.0.0.182
+postgres3 newid=183 ip=10.0.0.183
 
-[PGP2]
-pgp1
-pgp2
+[PGPOOL]
+postgres1
+postgres2
+postgres3
 
 [POSTGRES]
 postgres1
 postgres2
+postgres3
 
 [all:vars]
 storage=synodata
-
 dns_domain=homelab.local
 
 postgres_version=12
+postgres_pgdata=/data1/pgsql/12/data
+postgres_pgbackup=/data1/pgsql/12/backup
+postgres_pgarchive=/data1/pgsql/12/archive
 
 postgres_user_home=/data1/pgsql
 postgres_user_name=postgres
 postgres_user_pass=changeme
 
-postgres_replica_user=replica_user
+postgres_replica_user=repl
 postgres_replica_pass=changeme
 
-postgres_pgp2_user=pgp2_user
-postgres_pgp2_pass=changeme
+postgres_pgpool_user=pgpool
+postgres_pgpool_pass=changeme
 
-[PGP2:vars]
+pgpool_version=4.2
+pgpool_vip=10.0.0.180
+
+[PGPOOL:vars]
 vmid=103
 tmpl=DEFAULT-BIOS
 

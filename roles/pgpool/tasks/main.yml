@@ -1,0 +1,299 @@
+---
+- name: install the pgpool-II 4.2 and postgres repository 
+  yum:
+    name: '{{ item.name }}'
+  with_items:
+  - { name: 'https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm' }
+  - { name: 'https://www.pgpool.net/yum/rpms/{{ pgpool_version }}/redhat/rhel-7-x86_64/pgpool-II-release-4.2-1.noarch.rpm' }
+  tags:
+  - pgp_install
+
+- name: install the pgpool-II 4.2
+  yum:
+    name:
+    - vim
+    - sshpass
+    - pgpool-II-pg{{ postgres_version }}
+    - pgpool-II-pg{{ postgres_version }}-extensions
+    enablerepo: ''
+    state: present
+  tags:
+  - pgp_install
+
+# - name: change postgres's password
+#   user:
+#     name: postgres
+#     password: '{{ postgres_user_pass | password_hash("sha512") }}'
+#     state: present
+#   tags:
+#   - pgp_service
+
+# - name: generate ssh key for connecting without asking password
+#   shell: |
+#     ssh-keygen -q -t rsa -N '' -f ~postgres/.ssh/id_rsa <<< y
+#   become_user: postgres
+#   tags:
+#   - pgp_service
+
+# - name: copy ssh key
+#   shell: |
+#     sshpass -p{{ postgres_user_pass }} ssh-copy-id -o StrictHostKeyChecking=no postgres@{{ hostvars[item].inventory_hostname }}
+#   become_user: postgres
+#   with_items:
+#   - '{{ groups["PGPOOL"] }}'
+#   tags:
+#   - pgp_service
+
+- name: generate ssh key for connecting without asking password
+  shell: |
+    ssh-keygen -q -t rsa -N '' -f {{ postgres_user_home }}/.ssh/id_rsa_pgpool <<< y
+  become_user: postgres
+  tags:
+  - postgres_user
+
+- name: copy ssh key
+  shell: |
+    sshpass -p{{ postgres_user_pass }} \
+      ssh-copy-id -o StrictHostKeyChecking=no \
+        -i {{ postgres_user_home }}/.ssh/id_rsa_pgpool \
+        -f {{ postgres_user_name }}@{{ hostvars[item].inventory_hostname }}
+  with_items:
+  - '{{ groups["POSTGRES"] }}'
+  become_user: postgres
+  tags:
+  - postgres_user
+
+- name: add the pgpool server in the firewalld
+  firewalld:
+    port: '{{ item.port }}'
+    zone: '{{ item.zone }}'
+    permanent: '{{ item.permanent }}'
+    state: '{{ item.state }}'
+  with_items:
+  - { port: '9999/tcp', zone: 'public', permanent: yes, state: enabled }
+  - { port: '9898/tcp', zone: 'public', permanent: yes, state: enabled }
+  - { port: '9000/tcp', zone: 'public', permanent: yes, state: enabled }
+  - { port: '9694/tcp', zone: 'public', permanent: yes, state: enabled }
+  tags:
+  - pgp_firewall
+
+- name: reload service firewalld
+  systemd:
+    name: firewalld
+    state: reloaded
+  tags:
+  - pgp_firewall
+
+- name: enable service pgpool
+  systemd:
+    name: pgpool
+    enabled: yes
+    state: stopped
+  tags:
+  - pgp_service
+
+- name: create pgpool_node_id
+  shell: |
+    echo {{ inventory_hostname[-1:] | int - 1 }} > /etc/pgpool-II/pgpool_node_id
+  tags:
+  - pgp_config
+  - pgp_node_id
+
+# - name: copy pgpool reference config
+#   shell: |
+#     cp -p /etc/pgpool-II/pgpool.conf.sample-stream /etc/pgpool-II/pgpool.conf
+#   tags:
+#   - pgp_config
+
+- name: change pgpool config
+  template:
+    src: pgpool/pgpool.conf.j2
+    dest: /etc/pgpool-II/pgpool.conf
+    owner: postgres
+    group: postgres
+    mode: 0600
+  tags:
+  - pgp_config
+
+- name: change backend connection settings in pgpool config file
+  lineinfile:
+    path: /etc/pgpool-II/pgpool.conf
+    insertafter: '^# - Backend Connection Settings -'
+    line: |
+      backend_hostname{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = '{{ hostvars[item].inventory_hostname }}'
+      backend_port{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = 5432
+      backend_weight{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = 1
+      backend_data_directory{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = '{{ postgres_pgdata }}'
+      backend_flag{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = 'ALLOW_TO_FAILOVER'
+      backend_application_name{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = '{{ hostvars[item].inventory_hostname }}'
+  with_items:
+  - '{{ groups["PGPOOL"] }}'
+  tags:
+  - pgp_config
+
+- name: copy failover shell file
+  copy:
+    src: '{{ item.src }}'
+    dest: '{{ item.dest }}'
+    owner: postgres
+    group: postgres
+    mode: 0750
+    remote_src: yes
+  with_items:
+  - { src: '/etc/pgpool-II/failover.sh.sample', dest: '/etc/pgpool-II/failover.sh' }
+  - { src: '/etc/pgpool-II/follow_primary.sh.sample', dest: '/etc/pgpool-II/follow_primary.sh' }
+  tags:
+  - pgp_config
+
+- name: change env in failover shell file
+  replace:
+    path: '{{ item.path }}'
+    regexp: '{{ item.regexp }}'
+    replace: '{{ item.replace }}'
+  with_items:
+  - { path: '/etc/pgpool-II/failover.sh', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
+  - { path: '/etc/pgpool-II/follow_primary.sh', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
+  - { path: '/etc/pgpool-II/follow_primary.sh', regexp: '^REPLUSER=repl', replace: 'REPLUSER={{ postgres_replica_user }}' }
+  - { path: '/etc/pgpool-II/follow_primary.sh', regexp: '^PCP_USER=pgpool', replace: 'PCP_USER={{ postgres_pgpool_user }}' }
+  tags:
+  - pgp_config
+
+- name: create the encrypted password entry for pgpool user
+  shell: |
+    # echo '{{ postgres_pgpool_user }}:'`pg_md5 PCP {{ postgres_pgpool_pass }}` >> /etc/pgpool-II/pcp.conf
+    echo '{{ postgres_pgpool_user }}:'`pg_md5 {{ postgres_pgpool_pass }}` >> /etc/pgpool-II/pcp.conf
+    echo 'localhost:9898:{{ postgres_pgpool_user }}:{{ postgres_pgpool_pass }}' >> ~/.pcppass
+    echo '{{ pgpool_vip }}:{{ postgres_pgpool_user }}:{{ postgres_pgpool_pass }}' >> ~/.pcppass
+  become_user: postgres
+  tags:
+  - pgp_config
+
+- name: copy online recovery shell file
+  copy:
+    src: '{{ item.src }}'
+    dest: '{{ item.dest }}'
+    owner: postgres
+    group: postgres
+    mode: 0755
+    remote_src: yes
+  with_items:
+  - { src: '/etc/pgpool-II/recovery_1st_stage.sample', dest: '{{ postgres_pgdata }}/recovery_1st_stage' }
+  - { src: '/etc/pgpool-II/pgpool_remote_start.sample', dest: '{{ postgres_pgdata }}/pgpool_remote_start' }
+  tags:
+  - pgp_config
+
+- name: change envs in online recovery shell file
+  replace:
+    path: '{{ item.path }}'
+    regexp: '{{ item.regexp }}'
+    replace: '{{ item.replace }}'
+  with_items:
+  - { path: '{{ postgres_pgdata }}/recovery_1st_stage', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
+  - { path: '{{ postgres_pgdata }}/recovery_1st_stage', regexp: '^ARCHIVEDIR=/var/lib/pgsql/archivedir', replace: 'ARCHIVEDIR={{ postgres_pgarchive }}' }
+  - { path: '{{ postgres_pgdata }}/recovery_1st_stage', regexp: '^REPLUSER=repl', replace: 'REPLUSER={{ postgres_replica_user }}' }
+  - { path: '{{ postgres_pgdata }}/pgpool_remote_start', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
+  tags:
+  - pgp_config
+
+- name: create recovery extension for online recovery
+  shell: |
+    psql template1 -c "CREATE EXTENSION pgpool_recovery"
+  become_user: postgres
+  when: inventory_hostname == groups['POSTGRES'][0]
+  tags:
+  - pgp_config
+
+- name: client authentication configuration - pool_hba.conf
+  lineinfile:
+    path: '/etc/pgpool-II/pool_hba.conf'
+    line: |2
+      host    all            pgpool                         0.0.0.0/0    scram-sha-256
+      host    all            postgres                       0.0.0.0/0    scram-sha-256
+    state: present
+  tags:
+  - pgp_authentication
+
+- name: client authentication configuration - pool_pass
+  shell: |
+    echo '{{ postgres_user_pass }}' > ~/.pgpoolkey
+    chmod 600 ~/.pgpoolkey
+    pg_enc -m -k ~/.pgpoolkey -u pgpool {{ postgres_user_pass }}
+    pg_enc -m -k ~/.pgpoolkey -u postgres {{ postgres_user_pass }}
+  become_user: postgres
+  tags:
+  - pgp_authentication
+
+- name: specify all pgpool nodes information for configuring watchdog
+  lineinfile:
+    path: /etc/pgpool-II/pgpool.conf
+    insertafter: '^# - Watchdog communication Settings -'
+    line: |
+      hostname{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = '{{ hostvars[item].inventory_hostname }}'
+      wd_port{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = 9000
+      pgpool_port{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = 9999
+  with_items:
+  - '{{ groups["PGPOOL"] }}'
+  tags:
+  - pgp_watchdog
+
+- name: specify all Pgpool-II nodes information for sending and receiving heartbeat signal
+  lineinfile:
+    path: /etc/pgpool-II/pgpool.conf
+    insertafter: '^# -- heartbeat mode --'
+    line: |
+      heartbeat_hostname{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = '{{ inventory_hostname }}'
+      heartbeat_port{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = 9694
+      heartbeat_device{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = ''
+  with_items:
+  - '{{ groups["PGPOOL"] }}'
+  tags:
+  - pgp_watchdog
+
+- name: copy sample script for escalation
+  shell: |
+    cp -p /etc/pgpool-II/escalation.sh{.sample,}
+    chown postgres:postgres /etc/pgpool-II/escalation.sh
+  tags:
+  - pgp_watchdog
+
+- name: change envs in escalation script
+  replace:
+    path: '{{ item.path }}'
+    regexp: '{{ item.regexp }}'
+    replace: '{{ item.replace }}'
+  with_items:
+  - { path: '/etc/pgpool-II/escalation.sh', regexp: 'server1 server2 server3', replace: '{{ pgpool_list | join(" ") }}' }
+  - { path: '/etc/pgpool-II/escalation.sh', regexp: '^VIP=192.168.137.150', replace: 'VIP={{ pgpool_vip }}' }
+  - { path: '/etc/pgpool-II/escalation.sh', regexp: '^DEVICE=enp0s8', replace: 'DEVICE=eth0' }
+  tags:
+  - pgp_watchdog
+
+- name: create the log directory on all servers
+  file:
+    path: '{{ item.dir }}'
+    owner: postgres
+    group: postgres
+    mode: '{{ item.mode }}'
+    state: directory
+  with_items:
+  - { dir: '/var/log/pgpool', mode: '0755' }
+  tags:
+  - pgp_log
+
+- name: change envs for string pgpool
+  replace:
+    path: '{{ item.path }}'
+    regexp: '{{ item.regexp }}'
+    replace: '{{ item.replace }}'
+  with_items:
+  - { path: '/etc/sysconfig/pgpool', regexp: 'OPTS=" -n"', replace: 'OPTS=" -D -n"' }
+  tags:
+  - pgp_service_start
+
+- name: start pgpool service
+  systemd:
+    name: pgpool
+    daemon_reload: yes
+    state: started
+  tags:
+  - pgp_service_start

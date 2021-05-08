@@ -48,10 +48,10 @@
     state: absent
   with_items:
   - { dir: '/var/lib/pgsql/{{ postgres_version }}' }
-  - { dir: '{{ postgres_user_home }} '}
+  - { dir: '{{ postgres_user_home }}'}
   - { dir: '{{ postgres_pgdata }}' }
   - { dir: '{{ postgres_pgbackup }}' }
-  - { dir: '{{ postgres_pgarchivelog }}' }
+  - { dir: '{{ postgres_pgarchive }}' }
   tags:
   - postgres_dir
 
@@ -60,14 +60,14 @@
     path: '{{ item.dir }}'
     owner: postgres
     group: postgres
-    mode: 0755
+    mode: '{{ item.mode }}'
     state: directory
   with_items:
-  - { dir: '/var/lib/pgsql/{{ postgres_version }}' }
-  - { dir: '{{ postgres_user_home }} '}
-  - { dir: '{{ postgres_pgdata }}' }
-  - { dir: '{{ postgres_pgbackup }}' }
-  - { dir: '{{ postgres_pgarchivelog }}' }
+  - { dir: '/var/lib/pgsql', mode: '0750' }
+  - { dir: '{{ postgres_user_home }}', mode: '0750'}
+  - { dir: '{{ postgres_pgdata }}', mode: '0700' }
+  - { dir: '{{ postgres_pgbackup }}', mode: '0700' }
+  - { dir: '{{ postgres_pgarchive }}', mode: '0700' }
   tags:
   - postgres_dir
 
@@ -78,6 +78,7 @@
     PGSETUP_INITDB_OPTIONS: "-D {{ postgres_pgdata }}"
   register: result
   failed_when: result.rc > 1
+  when: inventory_hostname == groups['POSTGRES'][0]
   tags:
   - postgres_init
 
@@ -88,7 +89,6 @@
     replace: '{{ item.replace }}'
   with_items:
   - { path: '/usr/lib/systemd/system/postgresql-{{ postgres_version }}.service', regexp: '^Environment=PGDATA=/var/lib/pgsql/{{ postgres_version }}/data/', replace: 'Environment=PGDATA={{ postgres_pgdata }}/' }
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#listen_addresses = 'localhost'", replace: "listen_addresses = '*'" }
   tags:
   - postgres_service
 
@@ -99,11 +99,15 @@
     replace: '{{ item.replace }}'
   become_user: postgres
   with_items:
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#wal_level = replica', replace: 'wal_level = replica' }
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#max_wal_senders = 10', replace: 'max_wal_senders = 10' }
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#wal_keep_segments = 0', replace: 'wal_keep_segments = 10' }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#listen_addresses = 'localhost'", replace: "listen_addresses = '*'" }
   - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#archive_mode = off', replace: 'archive_mode = on' }
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#archive_command = ''", replace: "archive_command = 'cp %p {{ postgres_pgarchivelog }}/%f'" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#archive_command = ''", replace: "archive_command = 'cp %p {{ postgres_pgarchive }}/%f'" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#max_wal_senders = 10', replace: 'max_wal_senders = 10' }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#max_replication_slots = 10', replace: 'max_replication_slots = 10' }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#wal_level = replica', replace: 'wal_level = replica' }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#hot_standby = on', replace: 'hot_standby = on' }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#wal_log_hints = off', replace: 'wal_log_hints = on' }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#autovacuum = on', replace: 'autovacuum = on' }
   when: inventory_hostname == groups['POSTGRES'][0]
   tags:
   - postgres_service
@@ -119,125 +123,77 @@
   tags:
   - postgres_user
 
-# - name: generate ssh key for connecting without asking password
-#   shell: |
-#     ssh-keygen -q -t rsa -N '' -f {{ postgres_user_home }}/.ssh/id_rsa <<< y
-#   become_user: postgres
-#   tags:
-#   - postgres_user
-
-# - name: copy ssh key
-#   shell: |
-#     sshpass -p{{ postgres_user_pass }} ssh-copy-id -o StrictHostKeyChecking=no postgres@postgres1
-#     sshpass -p{{ postgres_user_pass }} ssh-copy-id -o StrictHostKeyChecking=no postgres@postgres2
-#   become_user: postgres
-#   tags:
-#   - postgres_user
-
 - name: start postgresql server
   systemd:
     name: postgresql-{{ postgres_version }}
     daemon_reload: yes
     state: started
+  when: inventory_hostname == groups['POSTGRES'][0]
   tags:
   - postgres_start
 
-- name: change listen address dynamically to all
+- name: manage users
   shell: |
-    psql -c "ALTER SYSTEM SET listen_addresses TO '*';"
-  become_user: postgres
-  tags:
-  - postgres_config
-
-- name: change postgres user password
-  shell: |
-    psql -c "ALTER USER postgres WITH PASSWORD '{{ postgres_user_pass }}';"
+    psql -c "SET password_encryption = 'scram-sha-256'; ALTER USER postgres WITH PASSWORD '{{ postgres_user_pass }}';"
+    psql -c "SET password_encryption = 'scram-sha-256'; DROP ROLE IF EXISTS {{ postgres_replica_user }}; CREATE ROLE {{ postgres_replica_user }} WITH REPLICATION LOGIN PASSWORD '{{ postgres_replica_pass }}';"
+    psql -c "SET password_encryption = 'scram-sha-256'; DROP ROLE IF EXISTS {{ postgres_pgpool_user }}; CREATE ROLE {{ postgres_pgpool_user }} WITH LOGIN PASSWORD '{{ postgres_pgpool_pass }}';"
+    psql -c "SET password_encryption = 'scram-sha-256'; GRANT pg_monitor TO {{ postgres_pgpool_user }};"
   become_user: postgres
   when: inventory_hostname == groups['POSTGRES'][0]
   tags:
-  - postgres_config
-
-- name: create users for replication and pgp2
-  shell: |
-    psql -c "DROP ROLE IF EXISTS {{ postgres_replica_user }}; CREATE ROLE {{ postgres_replica_user }} WITH REPLICATION LOGIN PASSWORD '{{ postgres_replica_pass }}';"
-    psql -c "DROP ROLE IF EXISTS {{ postgres_pgp2_user }}; CREATE ROLE {{ postgres_pgp2_user }} WITH LOGIN PASSWORD '{{ postgres_pgp2_pass }}';"
-    psql -c "GRANT pg_monitor TO {{ postgres_pgp2_user }};"
-  become_user: postgres
-  when: inventory_hostname == groups['POSTGRES'][0]
-  tags:
+  - postgres_user
   - postgres_replica
 
 - name: add connection info to pg_hba for replication
   lineinfile:
     path: '{{ postgres_pgdata }}/pg_hba.conf'
-    line: 'host    replication    {{ postgres_replica_user }}    {{ hostvars[item].ip }}/32    trust'
+    line: |2
+      host    all            all                            samenet    scram-sha-256
+      host    replication    {{ postgres_replica_user }}    samenet    scram-sha-256
     state: present
   become_user: postgres
-  with_items:
-  - '{{ groups["POSTGRES"] }}'
+  when: inventory_hostname == groups['POSTGRES'][0]
   tags:
   - postgres_replica
-
-- name: add connection info to pg_hba for pgp2
-  lineinfile:
-    path: '{{ postgres_pgdata }}/pg_hba.conf'
-    line: 'host    replication    {{ postgres_pgp2_user }}    {{ hostvars[item].ip }}/32    trust'
-    state: present
-  become_user: postgres
-  with_items:
-  - '{{ groups["PGP2"] }}'
-  tags:
-  - postgres_pgp2
 
 - name: reload postgres config
   shell: |
     psql -c "SELECT pg_reload_conf();"
   become_user: postgres
+  when: inventory_hostname == groups['POSTGRES'][0]
   tags:
-  - postgres_config
+  - postgres_service
   - postgres_replica
-  - postgres_pgp2
-  - postgres_master
 
-- name: stop postgresql standby server
-  systemd:
-    name: postgresql-{{ postgres_version }}
-    daemon_reload: yes
-    state: stopped
-  ignore_errors: yes
-  when: inventory_hostname != groups['POSTGRES'][0]
-  tags:
-  - postgres_standby
-
-- name: delete old postgresql data on standby
+- name: create .pgpass file
   file:
-    path: '{{ item.dir }}'
-    state: absent
-  with_items:
-  - { dir: '{{ postgres_pgdata }}' }
-  - { dir: '{{ postgres_pgbackup }}' }
-  - { dir: '{{ postgres_pgarchivelog }}' }
-  when: inventory_hostname != groups['POSTGRES'][0]
-  tags:
-  - postgres_standby
-
-- name: create data directory on standby
-  file:
-    path: '{{ item.dir }}'
+    path: '{{ postgres_user_home }}/.pgpass'
     owner: postgres
     group: postgres
-    mode: 0755
-    state: directory
-  with_items:
-  - { dir: '{{ postgres_pgbackup }}' }
-  - { dir: '{{ postgres_pgarchivelog }}' }
-  when: inventory_hostname != groups['POSTGRES'][0]
+    mode: '0600'
+    state: touch
   tags:
-  - postgres_standby
+  - postgres_user
+  - postgres_pgpass
+
+- name: create pgpass file to allow repl user without asking password
+  lineinfile:
+    path: '~{{ postgres_user_name }}/.pgpass'
+    line: |2
+      {{ hostvars[item].inventory_hostname }}:5432:replication:{{ postgres_replica_user }}:{{ postgres_replica_pass }}
+      {{ hostvars[item].inventory_hostname }}:5432:postgres:postgres:{{ postgres_user_pass }}
+      {{ hostvars[item].inventory_hostname }}:5432:postgres:pgpool:{{ postgres_user_pass }}
+    state: present
+  become_user: postgres
+  with_items:
+  - '{{ groups["POSTGRES"] }}'
+  tags:
+  - postgres_user
+  - postgres_pgpass
 
 - name: base backup of the master server from the standby server
   shell: |
-    pg_basebackup -h {{ hostvars[groups["POSTGRES"][0]].ip }} -D {{ postgres_pgdata }} -U {{ postgres_replica_user }} -P -v -R -X stream -C -S {{ inventory_hostname }}
+    pg_basebackup -h {{ hostvars[groups["POSTGRES"][0]].inventory_hostname }} -D {{ postgres_pgdata }} -U {{ postgres_replica_user }} -P -v -R -X stream -C -S {{ inventory_hostname }}
   become_user: postgres
   when: inventory_hostname != groups['POSTGRES'][0]
   tags:
@@ -251,25 +207,4 @@
   when: inventory_hostname != groups['POSTGRES'][0]
   tags:
   - postgres_standby
-
-- name: create .pgpass file
-  file:
-    path: '{{ postgres_user_home }}/.pgpass'
-    owner: postgres
-    group: postgres
-    mode: '0600'
-    state: touch
-  tags:
-  - postgres_pgpass
-
-- name: config .pgpass file to allow user without password
-  lineinfile:
-    path: '{{ postgres_user_home }}/.pgpass'
-    line: '{{ item.line }}'
-    state: present
-  become_user: postgres
-  with_items:
-  - { line: '{{ inventory_hostname }}:5432:replication:{{ postgres_replica_user }}:{{ postgres_replica_pass }}' }
-  - { line: '{{ inventory_hostname }}:5432:postgres:postgres:{{ postgres_user_pass }}' }
-  tags:
-  - postgres_pgpass
+  - postgres_standby_service

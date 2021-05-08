@@ -97,7 +97,7 @@ serialize_accept = off
 
 # - Authentication -
 
-enable_pool_hba = off
+enable_pool_hba = on
                                    # Use pool_hba.conf for client authentication
 pool_passwd = 'pool_passwd'
                                    # File name of pool_passwd for md5 authentication.
@@ -252,22 +252,22 @@ syslog_ident = 'pgpool'
                                         #   panic
 
 # This is used when logging to stderr:
-#logging_collector = off                # Enable capturing of stderr
+logging_collector = on                  # Enable capturing of stderr
                                         # into log files.
                                         # (change requires restart)
 
 # -- Only used if logging_collector is on ---
 
-#log_directory = '/tmp/pgpool_log'      # directory where log files are written,
+log_directory = '/var/log/pgpool'       # directory where log files are written,
                                         # can be absolute
-#log_filename = 'pgpool-%Y-%m-%d_%H%M%S.log'
+log_filename = 'pgpool-%Y-%m-%d_%H%M%S.log'
                                         # log file name pattern,
                                         # can include strftime() escapes
 
-#log_file_mode = 0600                   # creation mode for log files,
+log_file_mode = 0640                    # creation mode for log files,
                                         # begin with 0 to use octal notation
 
-#log_truncate_on_rotation = off         # If on, an existing log file with the
+log_truncate_on_rotation = on           # If on, an existing log file with the
                                         # same name as the new log file will be
                                         # truncated rather than appended to.
                                         # But such truncation only occurs on
@@ -276,10 +276,10 @@ syslog_ident = 'pgpool'
                                         # off, meaning append to existing files
                                         # in all cases.
 
-#log_rotation_age = 1d                  # Automatic rotation of logfiles will
+log_rotation_age = 1d                   # Automatic rotation of logfiles will
                                         # happen after that (minutes)time.
                                         # 0 disables time based rotation.
-#log_rotation_size = 10MB               # Automatic rotation of logfiles will
+log_rotation_size = 10MB                # Automatic rotation of logfiles will
                                         # happen after that much (KB) log output.
                                         # 0 disables size based rotation.
 #------------------------------------------------------------------------------
@@ -444,11 +444,11 @@ statement_level_load_balance = off
 sr_check_period = 10
                                    # Streaming replication check period
                                    # Disabled (0) by default
-sr_check_user = '{{ postgres_pgp2_user }}'
+sr_check_user = '{{ postgres_pgpool_user }}'
                                    # Streaming replication check user
                                    # This is neccessary even if you disable streaming
                                    # replication delay check by sr_check_period = 0
-sr_check_password = '{{ postgres_pgp2_pass }}'
+sr_check_password = '{{ postgres_pgpool_pass }}'
                                    # Password for streaming replication check user
                                    # Leaving it empty will make Pgpool-II to first look for the
                                    # Password in pool_passwd file before using the empty password
@@ -489,9 +489,9 @@ health_check_period = 5
 health_check_timeout = 30
                                    # Health check timeout
                                    # 0 means no timeout
-health_check_user = '{{ postgres_pgp2_user }}'
+health_check_user = '{{ postgres_pgpool_user }}'
                                    # Health check user
-health_check_password = '{{ postgres_pgp2_pass }}'
+health_check_password = '{{ postgres_pgpool_pass }}'
                                    # Password for health check user
                                    # Leaving it empty will make Pgpool-II to first look for the
                                    # Password in pool_passwd file before using the empty password
@@ -615,7 +615,7 @@ auto_failback_interval = 1min
 
 # - Enabling -
 
-use_watchdog = off
+use_watchdog = on
                                     # Activates watchdog
                                     # (change requires restart)
 
@@ -632,14 +632,14 @@ ping_path = '/bin'
 
 # - Watchdog communication Settings -
 
-hostname0 = ''
+#hostname0 = ''
                                     # Host name or IP address of pgpool node
                                     # for watchdog connection
                                     # (change requires restart)
-wd_port0 = 9000
+#wd_port0 = 9000
                                     # Port number for watchdog service
                                     # (change requires restart)
-pgpool_port0 = 9999
+#pgpool_port0 = 9999
                                     # Port number for pgpool
                                     # (change requires restart)
 
@@ -668,7 +668,7 @@ wd_ipc_socket_dir = '/var/run/postgresql'
 
 # - Virtual IP control Setting -
 
-delegate_IP = ''
+delegate_IP = '{{ pgpool_vip }}'
                                     # delegate IP address
                                     # If this is empty, virtual IP never bring up.
                                     # (change requires restart)
@@ -699,7 +699,7 @@ clear_memqcache_on_escalation = on
                                     # This should be off if client connects to pgpool
                                     # not using virtual IP.
                                     # (change requires restart)
-wd_escalation_command = ''
+wd_escalation_command = '/etc/pgpool-II/escalation.sh'
                                     # Executes this command at escalation on new active pgpool.
                                     # (change requires restart)
 wd_de_escalation_command = ''
@@ -754,15 +754,15 @@ wd_interval = 10
 
 # -- heartbeat mode --
 
-heartbeat_hostname0 = ''
+#heartbeat_hostname0 = ''
                                     # Host name or IP address used
                                     # for sending heartbeat signal.
                                     # (change requires restart)
-heartbeat_port0 = 9694
+#heartbeat_port0 = 9694
                                     # Port number used for receiving/sending heartbeat signal
                                     # Usually this is the same as heartbeat_portX.
                                     # (change requires restart)
-heartbeat_device0 = ''
+#heartbeat_device0 = ''
                                     # Name of NIC device (such like 'eth0')
                                     # used for sending/receiving heartbeat
                                     # signal to/from destination 0.
