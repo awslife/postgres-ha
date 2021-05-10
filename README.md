@@ -1,6 +1,8 @@
-# postgres-ha
+# PostgreSQL 12 Streaming Replication with PGPool 4.2
 
-Postgres-HA
+최근 많이 사용되는 PostgreSQL Database의 Streaming Replication 구성 방법에 대해서 정리해보았다. 9 버전에서 도입된 Streaming Replication 구성 방법이 12에서는 조금 달리 설정되어야 하지만 구글에서 검색되는 자료의 대부분이 9버전 기준으로 정리된게 많았고 잘못된 구성은 나중에 어떤 문제가 생길지 모르기 때문에 12 버전에 최적화된 설정을 찾기 위해 읽어보았던 내용을 중심으로 정리하였다.
+
+모든 구성은 PostgreSQL 12와 Pgpool-II 4.2에서 테스트되었다.
 
 # Replication Test
 
@@ -123,3 +125,7 @@ Password for user pgpool:
 
 -bash-4.2$
 ```
+
+# Reference
+
+[Pgpool-II + Watchdog Setup Example](https://www.pgpool.net/docs/42/en/html/example-cluster.html)
