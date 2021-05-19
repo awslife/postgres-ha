@@ -52,8 +52,6 @@ PostgreSQL HA 구성은 [Reference](#Reference)의 Pgpool-II + Watchdog Setup Ex
 | Watchdog | On | Life check method: heartbeat |
 | Start | automatically Enable | - |
 
-## Various sample scripts included in rpm package
-
 # Installation
 
 ## PostgreSQL 설치
