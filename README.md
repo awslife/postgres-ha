@@ -4,6 +4,108 @@
 
 모든 구성은 PostgreSQL 12와 Pgpool-II 4.2에서 테스트되었다.
 
+# prerequisite
+
+- [Proxmox](https://www.proxmox.com/en/) 
+- [Ansible](https://www.ansible.com/)
+- Virtual Machine X 3ea
+
+# PostgreSQL 12 HA Architecture
+
+PostgreSQL HA 구성은 [Reference](#Reference)의 Pgpool-II + Watchdog Setup Example를 참고하여 구성하였다.
+전체 구성은 아래 이미지와 같다.
+![Cluster System Configuration](https://www.pgpool.net/docs/42/en/html/cluster_40.gif "Cluster System Configuration")
+
+# PostgreSQL Cluster Configuration Variables
+
+## Hostname and IP address
+
+| Hostname | IP Address | Virtual IP Address |
+|:-:|:-:|:-:|
+| postgres1 | 10.0.0.181 |  |
+| postgres2 | 10.0.0.182 | 10.0.0.180 |
+| postgres3 | 10.0.0.183 |  |
+
+## PostgreSQL version and Configuration
+
+| Item | Value | Detail |
+|:-|:-:|:-:|
+| PostgreSQL | 12 |  |
+| Port | 5432 |  |
+| $PGDATA | /data1/pgsql/12/data |  |
+| Archive mode | On | |
+| Replication Slots | Enable | - |
+| Start automatically | Enable | - |
+
+## Pgpool-II version and Configuration
+
+| Item | Value | Detail |
+|:-|:-:|:-:|
+| Pgpool-II Version | 4.2 |  |
+| Port | 9999 | Pgpool-II accepts connections |
+| | 9898 | PCP process accepts connections |
+| | 9000 | watchdog accepts connections |
+| | 9694 | UDP port for receiving Watchdog's heartbeat signal |
+| Config file | /etc/pgpool-II/pgpool.conf | Pgpool-II config file |
+| Pgpool-II start user | postgres (Pgpool-II 4.1 or later) | Pgpool-II 4.0 or before, the default startup user is root |
+| Running mode | streaming replication mode | - |
+| Watchdog | On | Life check method: heartbeat |
+| Start | automatically Enable | - |
+
+## Various sample scripts included in rpm package
+
+# Installation
+
+## PostgreSQL 설치
+
+PostgreSQL 설치는 rpm을 사용하여 설치하였다. 설치전에 PostgreSQL Repository를 연결해주도록 하자.
+
+```bash
+# yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+# yum install -y postgresql12-server
+```
+
+## 방화벽 등록
+
+PostgreSQL Port를 방화벽에 등록한다.
+
+```bash
+# firewall-cmd --add-service=postgresql --permanent
+# firewall-cmd --reload
+```
+
+## PostgreSQL 초기화
+
+PostgreSQL 서버를 초기화한다. PGDATA 경로를 변경하고 싶다면 반드시 초기화 전에 PGDATA 경로 생성하고 PGSETUP_INITDB_OPTIONS 환경 변수에 설정할 경로를 지정한다. PGDATA 경로를 기본값으로 사용하고 싶다면 3번째 명령만 실행하면 된다.
+
+```bash
+# mkdir -p /data1/pgsql/12/data && chown -R postgres:postgres /data1/pgsql/12
+# export PGSETUP_INITDB_OPTIONS="-D /data1/pgsql/12/data"
+# /usr/pgsql-12/bin/postgresql-12-setup initdb
+```
+
+## PostgreSQL 서비스 경로 변경
+
+PostgreSQL 초기화가 완료되면 service 파일에서 PostgreSQL 설치 경로를 변경합니다. (위에서 PGDATA 경로를 변경하지 않았다면 서비스 경로 변경은 해주지 않아도 된다.)
+
+```bash
+# sed -i 's/^Environment=PGDATA=\/var\/lib\/pgsql\/12\/data\//Environment=PGDATA=\/data1\/pgsql\/12\/data\//g' /usr/lib/systemd/system/postgresql-12.service
+```
+
+## PostgreSQL 설정값 변경
+
+Streaming Replication을 위한 설정값을 변경해주도록 한다. PGDATA 경로의 postgresql.conf 파일에서 아래 설정값을 찾아서 변경해주도록 하자. (자세한 내용은 PostgreSQL 홈페이지를 참조하자.)
+
+- listen_address 값을 '*'로 변경하여 호스트에 할당된 모든 아이피로 서비스 가능하도록 변경하자.
+- archive_mode 값을 on으로 변경하여 archive 모드를 활성화 하자.
+- archive_command 값을 'cp %p /data1/pgsql/12/archive/%f'로 설정하자. (PGDATA를 변경하지 않았다면 /var/lib/pgsql/에서 archive 경로를 확인하여 입력하자.)
+- max_wal_sender 값을 10으로 설정하자.
+- max_replication_slots 값을 10으로 설정하자.
+- wal_level 값을 replica로 설정하자.
+- hot_standby 값을 on으로 설정하자.
+- wal_log_hints 값을 on으로 설정하자.
+- autovacuum 값을 on으로 설정하자. (autovacuum 값을 옵션이며 성능과 기능을 확인 후 설정하도록 하자.)
+
 # Replication Test
 
 ## Check status of pool_nodes

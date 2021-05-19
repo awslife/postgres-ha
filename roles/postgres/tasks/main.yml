@@ -134,10 +134,10 @@
 
 - name: manage users
   shell: |
-    psql -c "SET password_encryption = 'scram-sha-256'; ALTER USER postgres WITH PASSWORD '{{ postgres_user_pass }}';"
-    psql -c "SET password_encryption = 'scram-sha-256'; DROP ROLE IF EXISTS {{ postgres_replica_user }}; CREATE ROLE {{ postgres_replica_user }} WITH REPLICATION LOGIN PASSWORD '{{ postgres_replica_pass }}';"
-    psql -c "SET password_encryption = 'scram-sha-256'; DROP ROLE IF EXISTS {{ postgres_pgpool_user }}; CREATE ROLE {{ postgres_pgpool_user }} WITH LOGIN PASSWORD '{{ postgres_pgpool_pass }}';"
-    psql -c "SET password_encryption = 'scram-sha-256'; GRANT pg_monitor TO {{ postgres_pgpool_user }};"
+    psql -c "ALTER USER postgres WITH PASSWORD '{{ postgres_user_pass }}';"
+    psql -c "DROP ROLE IF EXISTS {{ postgres_replica_user }}; CREATE ROLE {{ postgres_replica_user }} WITH REPLICATION LOGIN PASSWORD '{{ postgres_replica_pass }}';"
+    psql -c "DROP ROLE IF EXISTS {{ postgres_pgpool_user }}; CREATE ROLE {{ postgres_pgpool_user }} WITH LOGIN PASSWORD '{{ postgres_pgpool_pass }}';"
+    psql -c "GRANT pg_monitor TO {{ postgres_pgpool_user }};"
   become_user: postgres
   when: inventory_hostname == groups['POSTGRES'][0]
   tags:
@@ -148,8 +148,8 @@
   lineinfile:
     path: '{{ postgres_pgdata }}/pg_hba.conf'
     line: |2
-      host    all            all                            samenet    scram-sha-256
-      host    replication    {{ postgres_replica_user }}    samenet    scram-sha-256
+      host    replication    {{ postgres_replica_user }}    samenet    md5
+      host    all            all                            samenet    md5
     state: present
   become_user: postgres
   when: inventory_hostname == groups['POSTGRES'][0]

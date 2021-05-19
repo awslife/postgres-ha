@@ -1,68 +1,4 @@
 ---
-- name: install the pgpool-II 4.2 and postgres repository 
-  yum:
-    name: '{{ item.name }}'
-  with_items:
-  - { name: 'https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm' }
-  - { name: 'https://www.pgpool.net/yum/rpms/{{ pgpool_version }}/redhat/rhel-7-x86_64/pgpool-II-release-4.2-1.noarch.rpm' }
-  tags:
-  - pgp_install
-
-- name: install the pgpool-II 4.2
-  yum:
-    name:
-    - vim
-    - sshpass
-    - pgpool-II-pg{{ postgres_version }}
-    - pgpool-II-pg{{ postgres_version }}-extensions
-    enablerepo: ''
-    state: present
-  tags:
-  - pgp_install
-
-# - name: change postgres's password
-#   user:
-#     name: postgres
-#     password: '{{ postgres_user_pass | password_hash("sha512") }}'
-#     state: present
-#   tags:
-#   - pgp_service
-
-# - name: generate ssh key for connecting without asking password
-#   shell: |
-#     ssh-keygen -q -t rsa -N '' -f ~postgres/.ssh/id_rsa <<< y
-#   become_user: postgres
-#   tags:
-#   - pgp_service
-
-# - name: copy ssh key
-#   shell: |
-#     sshpass -p{{ postgres_user_pass }} ssh-copy-id -o StrictHostKeyChecking=no postgres@{{ hostvars[item].inventory_hostname }}
-#   become_user: postgres
-#   with_items:
-#   - '{{ groups["PGPOOL"] }}'
-#   tags:
-#   - pgp_service
-
-- name: generate ssh key for connecting without asking password
-  shell: |
-    ssh-keygen -q -t rsa -N '' -f {{ postgres_user_home }}/.ssh/id_rsa_pgpool <<< y
-  become_user: postgres
-  tags:
-  - postgres_user
-
-- name: copy ssh key
-  shell: |
-    sshpass -p{{ postgres_user_pass }} \
-      ssh-copy-id -o StrictHostKeyChecking=no \
-        -i {{ postgres_user_home }}/.ssh/id_rsa_pgpool \
-        -f {{ postgres_user_name }}@{{ hostvars[item].inventory_hostname }}
-  with_items:
-  - '{{ groups["POSTGRES"] }}'
-  become_user: postgres
-  tags:
-  - postgres_user
-
 - name: add the pgpool server in the firewalld
   firewalld:
     port: '{{ item.port }}'
@@ -84,6 +20,46 @@
   tags:
   - pgp_firewall
 
+- name: install the pgpool-II 4.2 and postgres repository 
+  yum:
+    name: '{{ item.name }}'
+  with_items:
+  - { name: 'https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm' }
+  - { name: 'https://www.pgpool.net/yum/rpms/{{ pgpool_version }}/redhat/rhel-7-x86_64/pgpool-II-release-4.2-1.noarch.rpm' }
+  tags:
+  - pgp_install
+
+- name: install the pgpool-II 4.2
+  yum:
+    name:
+    - vim
+    - sshpass
+    - pgpool-II-pg{{ postgres_version }}
+    - pgpool-II-pg{{ postgres_version }}-extensions
+    enablerepo: ''
+    state: present
+  tags:
+  - pgp_install
+
+- name: generate ssh key for connecting without asking password
+  shell: |
+    ssh-keygen -q -t rsa -N '' -f {{ postgres_user_home }}/.ssh/id_rsa_pgpool <<< y
+  become_user: postgres
+  tags:
+  - postgres_user
+
+- name: copy ssh key
+  shell: |
+    sshpass -p{{ postgres_user_pass }} \
+      ssh-copy-id -o StrictHostKeyChecking=no \
+        -i {{ postgres_user_home }}/.ssh/id_rsa_pgpool \
+        -f {{ postgres_user_name }}@{{ hostvars[item].inventory_hostname }}
+  with_items:
+  - '{{ groups["POSTGRES"] }}'
+  become_user: postgres
+  tags:
+  - postgres_user
+
 - name: enable service pgpool
   systemd:
     name: pgpool
@@ -92,18 +68,22 @@
   tags:
   - pgp_service
 
+- name: create .pgpass file
+  file:
+    path: '/etc/pgpool-II'
+    owner: postgres
+    group: root
+    state: 'directory'
+  tags:
+  - pgp_config
+  - pgp_dir
+
 - name: create pgpool_node_id
   shell: |
     echo {{ inventory_hostname[-1:] | int - 1 }} > /etc/pgpool-II/pgpool_node_id
   tags:
   - pgp_config
   - pgp_node_id
-
-# - name: copy pgpool reference config
-#   shell: |
-#     cp -p /etc/pgpool-II/pgpool.conf.sample-stream /etc/pgpool-II/pgpool.conf
-#   tags:
-#   - pgp_config
 
 - name: change pgpool config
   template:
@@ -159,12 +139,16 @@
   - pgp_config
 
 - name: create the encrypted password entry for pgpool user
-  shell: |
-    # echo '{{ postgres_pgpool_user }}:'`pg_md5 PCP {{ postgres_pgpool_pass }}` >> /etc/pgpool-II/pcp.conf
-    echo '{{ postgres_pgpool_user }}:'`pg_md5 {{ postgres_pgpool_pass }}` >> /etc/pgpool-II/pcp.conf
-    echo 'localhost:9898:{{ postgres_pgpool_user }}:{{ postgres_pgpool_pass }}' >> ~/.pcppass
-    echo '{{ pgpool_vip }}:{{ postgres_pgpool_user }}:{{ postgres_pgpool_pass }}' >> ~/.pcppass
+  lineinfile:
+    line: '{{ item.line }}'
+    insertafter: 'EOF'
+    path: ~postgres/.pcppass
+    create: yes
   become_user: postgres
+  with_items:
+  - { line: '{{ postgres_pgpool_user }}:`pg_md5 {{ postgres_pgpool_pass }}`' }
+  - { line: 'localhost:9898:{{ postgres_pgpool_user }}:{{ postgres_pgpool_pass }}' }
+  - { line: '{{ pgpool_vip }}:{{ postgres_pgpool_user }}:{{ postgres_pgpool_pass }}' }
   tags:
   - pgp_config
 
@@ -207,19 +191,21 @@
   lineinfile:
     path: '/etc/pgpool-II/pool_hba.conf'
     line: |2
-      host    all            pgpool                         0.0.0.0/0    scram-sha-256
-      host    all            postgres                       0.0.0.0/0    scram-sha-256
+      host    all            pgpool                         0.0.0.0/0    md5
+      host    all            postgres                       0.0.0.0/0    md5
     state: present
   tags:
   - pgp_authentication
 
 - name: client authentication configuration - pool_pass
   shell: |
-    echo '{{ postgres_user_pass }}' > ~/.pgpoolkey
-    chmod 600 ~/.pgpoolkey
-    pg_enc -m -k ~/.pgpoolkey -u pgpool {{ postgres_user_pass }}
-    pg_enc -m -k ~/.pgpoolkey -u postgres {{ postgres_user_pass }}
+    rm -f /etc/pgpool-II/pool_passwd && touch /etc/pgpool-II/pool_passwd
+    echo "{{ postgres_user_name }}:`pg_md5 {{ postgres_user_pass }}`" >> /etc/pgpool-II/pool_passwd
+    echo "{{ postgres_pgpool_user }}:`pg_md5 {{ postgres_pgpool_pass }}`" >> /etc/pgpool-II/pool_passwd
   become_user: postgres
+  with_items:
+  - { line: '{{ postgres_user_name }}:`pg_md5 {{ postgres_user_pass }}`' }
+  - { line: '{{ postgres_pgpool_user }}:`pg_md5 {{ postgres_pgpool_pass }}`' }
   tags:
   - pgp_authentication
 
