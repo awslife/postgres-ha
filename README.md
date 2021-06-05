@@ -90,7 +90,25 @@ PostgreSQL 초기화가 완료되면 service 파일에서 PostgreSQL 설치 경�
 # sed -i 's/^Environment=PGDATA=\/var\/lib\/pgsql\/12\/data\//Environment=PGDATA=\/data1\/pgsql\/12\/data\//g' /usr/lib/systemd/system/postgresql-12.service
 ```
 
-## PostgreSQL 설정값 변경
+## pgpass 파일 설정
+
+.pgpass 파일을 생성하여 패스워드 없이 postgres 서버에 접속 가능하도록 설정한다.
+
+```ini
+postgres1:5432:replication:repl:changeme
+postgres1:5432:postgres:postgres:changeme
+postgres1:5432:postgres:pgpool:changeme
+postgres2:5432:replication:repl:changeme
+postgres2:5432:postgres:postgres:changeme
+postgres2:5432:postgres:pgpool:changeme
+postgres3:5432:replication:repl:changeme
+postgres3:5432:postgres:postgres:changeme
+postgres3:5432:postgres:pgpool:changeme
+```
+
+## Primary 서버 설정
+
+### PostgreSQL 설정값 변경
 
 Streaming Replication을 위한 설정값을 변경해주도록 한다. PGDATA 경로의 postgresql.conf 파일에서 아래 설정값을 찾아서 변경해주도록 하자. (자세한 내용은 PostgreSQL 홈페이지를 참조하자.)
 
@@ -103,6 +121,77 @@ Streaming Replication을 위한 설정값을 변경해주도록 한다. PGDATA �
 - hot_standby 값을 on으로 설정하자.
 - wal_log_hints 값을 on으로 설정하자.
 - autovacuum 값을 on으로 설정하자. (autovacuum 값을 옵션이며 성능과 기능을 확인 후 설정하도록 하자.)
+
+### Postgres User 패스워드 변경
+
+pgpool에서 ssh를 사용하여 리모트에서 명령을 실행하므로 postgres 사용자의 패스워드를 변경하도록 한다.
+패스워드는 편의상 3대의 VM 모두 동일하게 설정하도록 하자.
+
+### Postgres 시작
+
+이후 작업은 Postgres에서 ROLE 생성이 필요하므로 Postgre를 시작하도록 한다.
+systemctl 커맨드로 서비스 시작하도록 한다.
+
+```bash
+# systemctl start postgresql-12
+```
+
+### ROLE 생성
+
+postgres와 pgpool ROLE을 생성한다.
+
+```bash
+# psql -c "SET password_encryption = 'scram-sha-256'; ALTER USER postgres WITH PASSWORD 'changeme';"
+# psql -c "SET password_encryption = 'scram-sha-256'; DROP ROLE IF EXISTS repl; CREATE ROLE repl WITH REPLICATION LOGIN PASSWORD 'changeme';"
+# psql -c "SET password_encryption = 'scram-sha-256'; DROP ROLE IF EXISTS pgpool; CREATE ROLE pgpool WITH LOGIN PASSWORD 'changeme';"
+# psql -c "GRANT pg_monitor TO pgpool;"
+```
+
+### pg_hba 파일 수정
+
+위에서 생성한 repl과 pgpool 사용자가 외부에서 접속 가능하도록 pg_hba.conf 파일을 수정하도록 한다.
+
+```ini
+host    replication    repl    samenet    scram-sha-256
+host    all            all     samenet    scram-sha-256
+```
+### 설정값 적용
+
+설정값 적용을 위해 설정값을 다시 읽어들인다.
+
+```bash
+# psql -c "SELECT pg_reload_conf();"
+```
+
+## Secondary Server 설정
+
+### basebackup 수행
+
+basebackup을 수행하여 secondary 서버를 online replication 상태로 전환한다.
+
+postgres2 서버에서 실행
+```bash
+# pg_basebackup -h postgres1 -D /data1/pgsql/12/data -U repl -P -v -R -X stream -C -S postgres2
+```
+
+postgres3 서버에서 실행
+```bash
+# pg_basebackup -h postgres1 -D /data1/pgsql/12/data -U repl -P -v -R -X stream -C -S postgres2
+```
+
+### postgres 시작
+
+secondary 서버를 시작한다.
+
+postgres2 서버에서 실행
+```bash
+# systemctl start postgresql-12
+```
+
+postgres3 서버에서 실행
+```bash
+# systemctl start postgresql-12
+```
 
 # Replication Test
 
