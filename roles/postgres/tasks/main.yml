@@ -134,10 +134,10 @@
 
 - name: manage users
   shell: |
-    psql -c "ALTER USER postgres WITH PASSWORD '{{ postgres_user_pass }}';"
-    psql -c "DROP ROLE IF EXISTS {{ postgres_replica_user }}; CREATE ROLE {{ postgres_replica_user }} WITH REPLICATION LOGIN PASSWORD '{{ postgres_replica_pass }}';"
-    psql -c "DROP ROLE IF EXISTS {{ postgres_pgpool_user }}; CREATE ROLE {{ postgres_pgpool_user }} WITH LOGIN PASSWORD '{{ postgres_pgpool_pass }}';"
-    psql -c "GRANT pg_monitor TO {{ postgres_pgpool_user }};"
+    psql -c "SET password_encryption = 'scram-sha-256'; ALTER USER postgres WITH PASSWORD '{{ postgres_user_pass }}';"
+    psql -c "SET password_encryption = 'scram-sha-256'; DROP ROLE IF EXISTS {{ postgres_replica_name }}; CREATE ROLE {{ postgres_replica_name }} WITH REPLICATION LOGIN PASSWORD '{{ postgres_replica_pass }}';"
+    psql -c "SET password_encryption = 'scram-sha-256'; DROP ROLE IF EXISTS {{ postgres_pgpool_name }}; CREATE ROLE {{ postgres_pgpool_name }} WITH LOGIN PASSWORD '{{ postgres_pgpool_pass }}';"
+    psql -c "GRANT pg_monitor TO {{ postgres_pgpool_name }};"
   become_user: postgres
   when: inventory_hostname == groups['POSTGRES'][0]
   tags:
@@ -148,8 +148,8 @@
   lineinfile:
     path: '{{ postgres_pgdata }}/pg_hba.conf'
     line: |2
-      host    replication    {{ postgres_replica_user }}    samenet    md5
-      host    all            all                            samenet    md5
+      host    replication    {{ postgres_replica_name }}    samenet    scram-sha-256
+      host    all            all                            samenet    scram-sha-256
     state: present
   become_user: postgres
   when: inventory_hostname == groups['POSTGRES'][0]
@@ -176,11 +176,11 @@
   - postgres_user
   - postgres_pgpass
 
-- name: create pgpass file to allow repl user without asking password
+- name: add connection information to allow repl user without asking password
   lineinfile:
     path: '~{{ postgres_user_name }}/.pgpass'
     line: |2
-      {{ hostvars[item].inventory_hostname }}:5432:replication:{{ postgres_replica_user }}:{{ postgres_replica_pass }}
+      {{ hostvars[item].inventory_hostname }}:5432:replication:{{ postgres_replica_name }}:{{ postgres_replica_pass }}
       {{ hostvars[item].inventory_hostname }}:5432:postgres:postgres:{{ postgres_user_pass }}
       {{ hostvars[item].inventory_hostname }}:5432:postgres:pgpool:{{ postgres_user_pass }}
     state: present
@@ -191,9 +191,20 @@
   - postgres_user
   - postgres_pgpass
 
+- name: add additional connection information to allow repl user without asking password
+  lineinfile:
+    path: '~{{ postgres_user_name }}/.pgpass'
+    line: |2
+      {{ pgpool_vip }}:9999:postgres:pgpool:{{ postgres_pgpool_pass }}
+    state: present
+  become_user: postgres
+  tags:
+  - postgres_user
+  - postgres_pgpass
+
 - name: base backup of the master server from the standby server
   shell: |
-    pg_basebackup -h {{ hostvars[groups["POSTGRES"][0]].inventory_hostname }} -D {{ postgres_pgdata }} -U {{ postgres_replica_user }} -P -v -R -X stream -C -S {{ inventory_hostname }}
+    pg_basebackup -h {{ hostvars[groups["POSTGRES"][0]].inventory_hostname }} -D {{ postgres_pgdata }} -U {{ postgres_replica_name }} -P -v -R -X stream -C -S {{ inventory_hostname }}
   become_user: postgres
   when: inventory_hostname != groups['POSTGRES'][0]
   tags:

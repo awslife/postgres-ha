@@ -32,7 +32,6 @@
 - name: install the pgpool-II 4.2
   yum:
     name:
-    - vim
     - sshpass
     - pgpool-II-pg{{ postgres_version }}
     - pgpool-II-pg{{ postgres_version }}-extensions
@@ -68,7 +67,7 @@
   tags:
   - pgp_service
 
-- name: create .pgpass file
+- name: change directory permission for pgpool
   file:
     path: '/etc/pgpool-II'
     owner: postgres
@@ -77,6 +76,20 @@
   tags:
   - pgp_config
   - pgp_dir
+
+- name: copy base configuration file
+  copy:
+    src: '{{ item.src }}'
+    dest: '{{ item.dest }}'
+    owner: postgres
+    group: postgres
+    mode: '0644'
+    remote_src: yes
+  with_items:
+    - { src: '/etc/pgpool-II/pool_hba.conf.sample', dest: '/etc/pgpool-II/pool_hba.conf' }
+    - { src: '/etc/pgpool-II/pcp.conf.sample', dest: '/etc/pgpool-II/pcp.conf' }
+  tags:
+    - pgp_config
 
 - name: create pgpool_node_id
   shell: |
@@ -131,14 +144,26 @@
     regexp: '{{ item.regexp }}'
     replace: '{{ item.replace }}'
   with_items:
-  - { path: '/etc/pgpool-II/failover.sh', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
-  - { path: '/etc/pgpool-II/follow_primary.sh', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
-  - { path: '/etc/pgpool-II/follow_primary.sh', regexp: '^REPLUSER=repl', replace: 'REPLUSER={{ postgres_replica_user }}' }
-  - { path: '/etc/pgpool-II/follow_primary.sh', regexp: '^PCP_USER=pgpool', replace: 'PCP_USER={{ postgres_pgpool_user }}' }
+  # - { path: '/etc/pgpool-II/failover.sh', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
+  # - { path: '/etc/pgpool-II/follow_primary.sh', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
+  - { path: '/etc/pgpool-II/follow_primary.sh', regexp: '^ARCHIVEDIR=/var/lib/pgsql/archivedir', replace: 'ARCHIVEDIR={{ postgres_pgarchive }}'}
+  - { path: '/etc/pgpool-II/follow_primary.sh', regexp: '^REPLUSER=repl', replace: 'REPLUSER={{ postgres_replica_name }}' }
+  - { path: '/etc/pgpool-II/follow_primary.sh', regexp: '^PCP_USER=pgpool', replace: 'PCP_USER={{ postgres_pgpool_name }}' }
   tags:
   - pgp_config
 
-- name: create the encrypted password entry for pgpool user
+- name: create the encrypted password file
+  file:
+    path: '{{ item.path }}'
+    owner: postgres
+    group: postgres
+    mode: '{{ item.mode }}'
+    state: '{{ item.state }}'
+  with_items:
+    - { path: '{{ postgres_user_home }}/.pcpass', mode: '0600', state: absent }
+    - { path: '{{ postgres_user_home }}/.pcpass', mode: '0600', state: touch }
+
+- name: create the encrypted password entry for watchdog
   lineinfile:
     line: '{{ item.line }}'
     insertafter: 'EOF'
@@ -146,11 +171,14 @@
     create: yes
   become_user: postgres
   with_items:
-  - { line: '{{ postgres_pgpool_user }}:`pg_md5 {{ postgres_pgpool_pass }}`' }
-  - { line: 'localhost:9898:{{ postgres_pgpool_user }}:{{ postgres_pgpool_pass }}' }
-  - { line: '{{ pgpool_vip }}:{{ postgres_pgpool_user }}:{{ postgres_pgpool_pass }}' }
+  - { line: 'localhost:9898:{{ postgres_pgpool_name }}:{{ postgres_pgpool_pass }}' }
+  - { line: '{{ pgpool_vip }}:9898:{{ postgres_pgpool_name }}:{{ postgres_pgpool_pass }}' }
   tags:
   - pgp_config
+
+- name: create the encrypted password for pgpool
+  shell: |
+    echo "pgpool:`pg_md5 {{ postgres_user_pass }}`" >> /etc/pgpool-II/pcp.conf
 
 - name: copy online recovery shell file
   copy:
@@ -172,18 +200,22 @@
     regexp: '{{ item.regexp }}'
     replace: '{{ item.replace }}'
   with_items:
-  - { path: '{{ postgres_pgdata }}/recovery_1st_stage', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
+  # - { path: '{{ postgres_pgdata }}/recovery_1st_stage', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
   - { path: '{{ postgres_pgdata }}/recovery_1st_stage', regexp: '^ARCHIVEDIR=/var/lib/pgsql/archivedir', replace: 'ARCHIVEDIR={{ postgres_pgarchive }}' }
-  - { path: '{{ postgres_pgdata }}/recovery_1st_stage', regexp: '^REPLUSER=repl', replace: 'REPLUSER={{ postgres_replica_user }}' }
-  - { path: '{{ postgres_pgdata }}/pgpool_remote_start', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
+  - { path: '{{ postgres_pgdata }}/recovery_1st_stage', regexp: '^REPLUSER=repl', replace: 'REPLUSER={{ postgres_replica_name }}' }
+  # - { path: '{{ postgres_pgdata }}/pgpool_remote_start', regexp: '^PGHOME=/usr/pgsql-13', replace: 'PGHOME=/usr/pgsql-{{ postgres_version }}' }
   tags:
   - pgp_config
 
-- name: create recovery extension for online recovery
+- name: recreate recovery extension for online recovery
   shell: |
-    psql template1 -c "CREATE EXTENSION pgpool_recovery"
+    psql template1 -c "{{ item.type }} EXTENSION pgpool_recovery"
   become_user: postgres
+  with_items:
+    - { type: 'DROP' }
+    - { type: 'CREATE' }
   when: inventory_hostname == groups['POSTGRES'][0]
+  ignore_errors: yes
   tags:
   - pgp_config
 
@@ -191,21 +223,43 @@
   lineinfile:
     path: '/etc/pgpool-II/pool_hba.conf'
     line: |2
-      host    all            pgpool                         0.0.0.0/0    md5
-      host    all            postgres                       0.0.0.0/0    md5
+      host    all            pgpool                         0.0.0.0/0    scram-sha-256
+      host    all            postgres                       0.0.0.0/0    scram-sha-256
+      host    all            all                            0.0.0.0/0    md5
     state: present
   tags:
   - pgp_authentication
 
+- name: recreate pool_passwd and pgpoolkey file
+  file:
+    path: '{{ item.path }}'
+    state: '{{ item.state }}'
+    owner: postgres
+    group: postgres
+    mode: '{{ item.mode }}'
+  with_items:
+    - { path: '/etc/pgpool-II/pool_passwd', state: absent, mode: '0600' }
+    - { path: '/etc/pgpool-II/pool_passwd', state: touch, mode: '0600' }
+    - { path: '{{ postgres_user_home }}/.pgpoolkey', state: absent, mode: '0600' }
+    - { path: '{{ postgres_user_home }}/.pgpoolkey', state: touch, mode: '0600' }
+
+- name: create pgpoolkey file
+  lineinfile:
+    path: '{{ postgres_user_home }}/.pgpoolkey'
+    line: |
+      {{ postgres_user_pass }}
+    state: present
+  become_user: postgres
+  tags:
+    - pgp_authentication
+
 - name: client authentication configuration - pool_pass
   shell: |
-    rm -f /etc/pgpool-II/pool_passwd && touch /etc/pgpool-II/pool_passwd
-    echo "{{ postgres_user_name }}:`pg_md5 {{ postgres_user_pass }}`" >> /etc/pgpool-II/pool_passwd
-    echo "{{ postgres_pgpool_user }}:`pg_md5 {{ postgres_pgpool_pass }}`" >> /etc/pgpool-II/pool_passwd
+    /usr/bin/pg_enc -m -k {{ postgres_user_home }}/.pgpoolkey -u {{ item.name }} {{ item.pass }}
   become_user: postgres
   with_items:
-  - { line: '{{ postgres_user_name }}:`pg_md5 {{ postgres_user_pass }}`' }
-  - { line: '{{ postgres_pgpool_user }}:`pg_md5 {{ postgres_pgpool_pass }}`' }
+    - { name: '{{ postgres_user_name }}', pass: '{{ postgres_user_pass }}' }
+    - { name: '{{ postgres_pgpool_name }}', pass: '{{ postgres_pgpool_pass }} '}
   tags:
   - pgp_authentication
 
@@ -227,9 +281,10 @@
     path: /etc/pgpool-II/pgpool.conf
     insertafter: '^# -- heartbeat mode --'
     line: |
-      heartbeat_hostname{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = '{{ inventory_hostname }}'
+      heartbeat_hostname{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = '{{ hostvars[item].inventory_hostname }}'
       heartbeat_port{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = 9694
       heartbeat_device{{ hostvars[item].inventory_hostname[-1:] | int - 1 }} = ''
+  become_user: postgres
   with_items:
   - '{{ groups["PGPOOL"] }}'
   tags:

@@ -17,20 +17,20 @@ postgres3
 storage=synodata
 dns_domain=homelab.local
 
-postgres_version=12
-postgres_pgdata=/data1/pgsql/12/data
-postgres_pgbackup=/data1/pgsql/12/backup
-postgres_pgarchive=/data1/pgsql/12/archive
+postgres_version=13
+postgres_pgdata=/data1/pgsql/13/data
+postgres_pgbackup=/data1/pgsql/13/backup
+postgres_pgarchive=/data1/pgsql/13/archive
 
 postgres_user_home=/data1/pgsql
 postgres_user_name=postgres
-postgres_user_pass=changeme
+postgres_user_pass=ChangeMe
 
-postgres_replica_user=repl
-postgres_replica_pass=changeme
+postgres_replica_name=repl
+postgres_replica_pass=ChangeMe
 
-postgres_pgpool_user=pgpool
-postgres_pgpool_pass=changeme
+postgres_pgpool_name=pgpool
+postgres_pgpool_pass=ChangeMe
 
 pgpool_version=4.2
 pgpool_vip=10.0.0.180
