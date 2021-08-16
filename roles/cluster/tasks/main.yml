@@ -24,7 +24,7 @@
 - name: Disable swap for current session
   shell: |
     swapoff -a
-    rm -f /swapfile
+    rm -f /swap.img
   tags:
   - swap
 
@@ -71,3 +71,71 @@
   when: inventory_hostname in groups['POSTGRES']
   tags:
   - fs_xfs
+
+- name: disable ipv6 kernel parameter
+  lineinfile:
+    path: "{{ item.path }}"
+    line: "{{ item.line }}"
+    state: present
+    create: yes
+  with_items:
+    - {
+        path: "/etc/sysctl.d/99-disable-ipv6.conf",
+        line: "net.ipv6.conf.all.disable_ipv6 = 1",
+      }
+    - {
+        path: "/etc/sysctl.d/99-disable-ipv6.conf",
+        line: "net.ipv6.conf.default.disable_ipv6 = 1",
+      }
+  tags:
+    - kernel
+
+- name: set kernel parameter for postgres
+  lineinfile:
+    path: "{{ item.path }}"
+    line: "{{ item.line }}"
+    state: present
+    create: yes
+  with_items:
+    - {
+        path: "/etc/sysctl.d/01-postgres.conf",
+        line: "kernel.shmall = 1230591",
+      }
+    - {
+        path: "/etc/sysctl.d/01-postgres.conf",
+        line: "kernel.shmmax = 5040500736",
+      }
+    - {
+        path: "/etc/sysctl.d/01-postgres.conf",
+        line: "fs.file-max = 65536",
+      }
+    - {
+        path: "/etc/sysctl.d/01-postgres.conf",
+        line: "vm.swappiness = 0",
+      }
+  tags:
+    - kernel
+
+- name: set limits for postgres
+  lineinfile:
+    path: "{{ item.path }}"
+    line: "{{ item.line }}"
+    state: present
+    create: yes
+  with_items:
+    - {
+        path: "/etc/security/limits.d/postgres.conf",
+        line: "postgres soft nofile 65535",
+      }
+    - {
+        path: "/etc/security/limits.d/postgres.conf",
+        line: "postgres hard nofile 65535",
+      }
+  tags:
+    - limit
+
+- name: reboot
+  reboot:
+    reboot_timeout: 60
+  tags:
+    - reboot

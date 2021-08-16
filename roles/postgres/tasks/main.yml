@@ -1,17 +1,18 @@
 ---
 - name: install the postgres repository rpm from a remote repo
-  yum:
+  dnf:
     name: https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
   tags:
-  - postgres_yum
+  - postgres_repo
 
 - name: install postgres server and client
-  yum:
+  dnf:
     name:
-    - vim
-    - sshpass
-    - postgresql{{ postgres_version }}-contrib
-    - postgresql{{ postgres_version }}-server
+      - vim
+      - sshpass
+      - postgresql{{ postgres_version }}-contrib
+      - postgresql{{ postgres_version }}-server
+    disablerepo: "AppStream"
     state: present
   tags:
   - postgres_install
@@ -42,18 +43,37 @@
   tags:
   - postgres_stop
 
+- name: stop postgresql server using pg_ctl
+  shell: |
+    /usr/pgsql-{{ postgres_version }}/bin/pg_ctl stop -D {{ postgres_pgdata }} -m immediate -s
+  become_user: postgres
+  ignore_errors: yes
+  tags:
+    - postgres_stop
+
 - name: delete old postgresql data
   file:
     path: '{{ item.dir }}'
     state: absent
   with_items:
-  - { dir: '/var/lib/pgsql/{{ postgres_version }}' }
-  - { dir: '{{ postgres_user_home }}'}
-  - { dir: '{{ postgres_pgdata }}' }
-  - { dir: '{{ postgres_pgbackup }}' }
-  - { dir: '{{ postgres_pgarchive }}' }
+    - { dir: '/var/lib/pgsql/{{ postgres_version }}' }
+    - { dir: '{{ postgres_user_home }}'}
+    - { dir: '{{ postgres_pgdata }}' }
+    - { dir: '{{ postgres_pgbackup }}' }
+    - { dir: '{{ postgres_pgarchive }}' }
   tags:
   - postgres_dir
+
+- name: change postgres user properties
+  user:
+    name: postgres
+    home: '{{ postgres_user_home }}'
+    password: '{{ postgres_user_pass | password_hash("sha512") }}'
+    create_home: no
+    move_home: no
+    state: present
+  tags:
+  - postgres_user
 
 - name: create data directory
   file:
@@ -61,13 +81,15 @@
     owner: postgres
     group: postgres
     mode: '{{ item.mode }}'
-    state: directory
+    state: '{{ item.state }}'
   with_items:
-  - { dir: '/var/lib/pgsql', mode: '0750' }
-  - { dir: '{{ postgres_user_home }}', mode: '0750'}
-  - { dir: '{{ postgres_pgdata }}', mode: '0700' }
-  - { dir: '{{ postgres_pgbackup }}', mode: '0700' }
-  - { dir: '{{ postgres_pgarchive }}', mode: '0700' }
+    - { dir: '/var/lib/pgsql', mode: '0750', state: directory }
+    - { dir: '/var/log/pgsql', mode: '0755', state: directory }
+    - { dir: '{{ postgres_pgdata }}', mode: '0700', state: directory }
+    - { dir: '{{ postgres_pgbackup }}', mode: '0700', state: directory }
+    - { dir: '{{ postgres_pgarchive }}', mode: '0700', state: directory }
+    - { dir: '{{ postgres_user_home }}', mode: '0750', state: directory }
+    - { dir: '{{ postgres_user_home }}/.pgpass', mode: '0700', state: touch }
   tags:
   - postgres_dir
 
@@ -80,17 +102,18 @@
   failed_when: result.rc > 1
   when: inventory_hostname == groups['POSTGRES'][0]
   tags:
-  - postgres_init
+    - postgres_init
 
-- name: change pgdata to new location in service file
-  replace:
-    path: '{{ item.path }}'
-    regexp: '{{ item.regexp }}'
-    replace: '{{ item.replace }}'
-  with_items:
-  - { path: '/usr/lib/systemd/system/postgresql-{{ postgres_version }}.service', regexp: '^Environment=PGDATA=/var/lib/pgsql/{{ postgres_version }}/data/', replace: 'Environment=PGDATA={{ postgres_pgdata }}/' }
-  tags:
-  - postgres_service
+# postgres service is not recommened when pgpool mode.
+# - name: change pgdata to new location in service file
+#   replace:
+#     path: '{{ item.path }}'
+#     regexp: '{{ item.regexp }}'
+#     replace: '{{ item.replace }}'
+#   with_items:
+#   - { path: '/usr/lib/systemd/system/postgresql-{{ postgres_version }}.service', regexp: '^Environment=PGDATA=/var/lib/pgsql/{{ postgres_version }}/data/', replace: 'Environment=PGDATA={{ postgres_pgdata }}/' }
+#   tags:
+#   - postgres_service
 
 - name: change essential parameter in postgresql.conf for master server
   replace:
@@ -100,28 +123,28 @@
   become_user: postgres
   with_items:
   - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#listen_addresses = 'localhost'", replace: "listen_addresses = '*'" }
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#archive_mode = off', replace: 'archive_mode = on' }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^max_connections = 100", replace: "max_connections = 1024" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^shared_buffers = 128MB", replace: "shared_buffers = 4GB" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^work_mem - 4MB", replace: "work_mem = 4MB" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#autovacuum = on", replace: "autovacuum = on" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#autovacuum_max_workers = 3", replace: "autovacuum_max_workers = 4" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^shared_preload_libraries = ''", replace: "shared_preload_libraries = 'pg_stat_statements'" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#archive_mode = off", replace: "archive_mode = on" }
   - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#archive_command = ''", replace: "archive_command = 'cp %p {{ postgres_pgarchive }}/%f'" }
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#max_wal_senders = 10', replace: 'max_wal_senders = 10' }
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#max_replication_slots = 10', replace: 'max_replication_slots = 10' }
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#wal_level = replica', replace: 'wal_level = replica' }
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#hot_standby = on', replace: 'hot_standby = on' }
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#wal_log_hints = off', replace: 'wal_log_hints = on' }
-  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: '^#autovacuum = on', replace: 'autovacuum = on' }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#max_wal_senders = 10", replace: "max_wal_senders = 10" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#max_replication_slots = 10", replace: "max_replication_slots = 10" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#synchronous_commit = on", replace: "synchronous_commit = on" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#wal_level = replica", replace: "wal_level = replica" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#hot_standby = on", replace: "hot_standby = on" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#wal_log_hints = off", replace: "wal_log_hints = on" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#log_directory = 'log'", replace: "log_directory = '/var/log/pgsql'" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#log_filename = 'postgresql-%a.log'", replace: "log_filename = 'postgresql-%Y-%m-%d.log'" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#log_file_mode = 0600", replace: "log_file_mode = 0644" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#log_rotation_age = 1d", replace: "log_rotation_age = 1d" }
+  - { path: '{{ postgres_pgdata }}/postgresql.conf', regexp: "^#log_rotation_size = 0", replace: "log_rotation_size = 128MB" }
   when: inventory_hostname == groups['POSTGRES'][0]
   tags:
   - postgres_service
-
-- name: change postgres's home directory
-  user:
-    name: postgres
-    home: '{{ postgres_user_home }}'
-    password: '{{ postgres_user_pass | password_hash("sha512") }}'
-    create_home: no
-    move_home: no
-    state: present
-  tags:
-  - postgres_user
 
 - name: start postgresql server
   systemd:
@@ -148,8 +171,12 @@
   lineinfile:
     path: '{{ postgres_pgdata }}/pg_hba.conf'
     line: |2
-      host    replication    {{ postgres_replica_name }}    samenet    scram-sha-256
-      host    all            all                            samenet    scram-sha-256
+      host replication {{ postgres_replica_name }} samenet scram-sha-256
+      host all postgres samenet scram-sha-256
+      host all pgpool samenet scram-sha-256
+      host all all 0.0.0.0/0 md5
+      #ldap options
+      #host all all 0.0.0.0/0 ldap ldapserver="{{ ldap_server }}" ldapport="{{ ldap_port }}" ldapbinddn="{{ ldap_binddn }}" ldapbindpasswd="{{ ldap_bindpasswd }}" ldapbasedn="{{ ldap_basedn }}" ldapsearchfilter="{{ ldap_searchfilter }}"
     state: present
   become_user: postgres
   when: inventory_hostname == groups['POSTGRES'][0]
@@ -164,17 +191,6 @@
   tags:
   - postgres_service
   - postgres_replica
-
-- name: create .pgpass file
-  file:
-    path: '{{ postgres_user_home }}/.pgpass'
-    owner: postgres
-    group: postgres
-    mode: '0600'
-    state: touch
-  tags:
-  - postgres_user
-  - postgres_pgpass
 
 - name: add connection information to allow repl user without asking password
   lineinfile:
@@ -193,7 +209,7 @@
 
 - name: add additional connection information to allow repl user without asking password
   lineinfile:
-    path: '~{{ postgres_user_name }}/.pgpass'
+    path: '{{ postgres_user_name }}/.pgpass'
     line: |2
       {{ pgpool_vip }}:9999:postgres:pgpool:{{ postgres_pgpool_pass }}
     state: present
