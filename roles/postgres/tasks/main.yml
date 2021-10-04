@@ -1,7 +1,17 @@
 ---
 - name: install the postgres repository rpm from a remote repo
   dnf:
-    name: https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+    name: https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+  when:
+  - ansible_distribution == 'CentOS' or ansible_distribution == 'Redhat' or ansible_distribution == 'Rocky'
+  tags:
+  - postgres_repo
+
+- name: disable postgres module
+  shell: |
+    dnf -qy module disable postgresql
+  when:
+  - ansible_distribution == 'CentOS' or ansible_distribution == 'Redhat' or ansible_distribution == 'Rocky'
   tags:
   - postgres_repo
 
@@ -14,6 +24,8 @@
       - postgresql{{ postgres_version }}-server
     disablerepo: "AppStream"
     state: present
+  when:
+  - ansible_distribution == 'CentOS' or ansible_distribution == 'Redhat' or ansible_distribution == 'Rocky'
   tags:
   - postgres_install
 
@@ -57,10 +69,11 @@
     state: absent
   with_items:
     - { dir: '/var/lib/pgsql/{{ postgres_version }}' }
-    - { dir: '{{ postgres_user_home }}'}
+    - { dir: '/var/log/pgsql' }
     - { dir: '{{ postgres_pgdata }}' }
     - { dir: '{{ postgres_pgbackup }}' }
     - { dir: '{{ postgres_pgarchive }}' }
+    - { dir: '{{ postgres_user_home }}' }
   tags:
   - postgres_dir
 
@@ -103,17 +116,6 @@
   when: inventory_hostname == groups['POSTGRES'][0]
   tags:
     - postgres_init
-
-# postgres service is not recommened when pgpool mode.
-# - name: change pgdata to new location in service file
-#   replace:
-#     path: '{{ item.path }}'
-#     regexp: '{{ item.regexp }}'
-#     replace: '{{ item.replace }}'
-#   with_items:
-#   - { path: '/usr/lib/systemd/system/postgresql-{{ postgres_version }}.service', regexp: '^Environment=PGDATA=/var/lib/pgsql/{{ postgres_version }}/data/', replace: 'Environment=PGDATA={{ postgres_pgdata }}/' }
-#   tags:
-#   - postgres_service
 
 - name: change essential parameter in postgresql.conf for master server
   replace:
@@ -227,11 +229,11 @@
   - postgres_standby
 
 - name: start postgresql server on standby
-  systemd:
-    name: postgresql-{{ postgres_version }}
-    daemon_reload: yes
-    state: started
+  shell: |
+    /usr/pgsql-{{ postgres_version }}/bin/pg_ctl start -s -D {{ postgres_pgdata }}
+  become_user: postgres
   when: inventory_hostname != groups['POSTGRES'][0]
   tags:
   - postgres_standby
-  - postgres_standby_service
+  - postgres_standby_start
+  

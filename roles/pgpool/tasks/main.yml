@@ -9,7 +9,7 @@
   - { port: '9999/tcp', zone: 'public', permanent: yes, state: enabled }
   - { port: '9898/tcp', zone: 'public', permanent: yes, state: enabled }
   - { port: '9000/tcp', zone: 'public', permanent: yes, state: enabled }
-  - { port: '9694/tcp', zone: 'public', permanent: yes, state: enabled }
+  - { port: '9694/udp', zone: 'public', permanent: yes, state: enabled }
   tags:
   - pgp_firewall
 
@@ -24,8 +24,7 @@
   yum:
     name: '{{ item.name }}'
   with_items:
-    - { name: 'https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm' }
-    - { name: 'https://www.pgpool.net/yum/rpms/{{ pgpool_version }}/redhat/rhel-7-x86_64/pgpool-II-release-4.2-1.noarch.rpm' }
+  - { name: 'https://www.pgpool.net/yum/rpms/{{ pgpool_version }}/redhat/rhel-8-x86_64/pgpool-II-release-4.2-1.noarch.rpm' }
   tags:
   - pgp_install
 
@@ -81,7 +80,7 @@
   file:
     path: '/etc/pgpool-II'
     owner: postgres
-    group: root
+    group: postgres
     state: 'directory'
   tags:
   - pgp_config
@@ -190,8 +189,8 @@
     mode: '{{ item.mode }}'
     state: '{{ item.state }}'
   with_items:
-    - { path: '{{ postgres_user_home }}/.pcpass', mode: '0600', state: absent }
-    - { path: '{{ postgres_user_home }}/.pcpass', mode: '0600', state: touch }
+    - { path: '{{ postgres_user_home }}/.pcppass', mode: '0600', state: absent }
+    - { path: '{{ postgres_user_home }}/.pcppass', mode: '0600', state: touch }
 
 - name: create the encrypted password entry for watchdog
   lineinfile:
@@ -252,53 +251,6 @@
   ignore_errors: yes
   tags:
   - pgp_config
-
-# remove pgp_authentication, all of authentication used to pg_hba.conf
-# - name: client authentication configuration - pool_hba.conf
-#   lineinfile:
-#     path: '/etc/pgpool-II/pool_hba.conf'
-#     line: |2
-#       host    all            pgpool                         0.0.0.0/0    scram-sha-256
-#       host    all            postgres                       0.0.0.0/0    scram-sha-256
-#       host    all            all                            0.0.0.0/0    md5
-#     state: present
-#   tags:
-#   - pgp_authentication
-
-# - name: recreate pool_passwd and pgpoolkey file
-#   file:
-#     path: '{{ item.path }}'
-#     state: '{{ item.state }}'
-#     owner: postgres
-#     group: postgres
-#     mode: '{{ item.mode }}'
-#   with_items:
-#     - { path: '/etc/pgpool-II/pool_passwd', state: absent, mode: '0600' }
-#     - { path: '/etc/pgpool-II/pool_passwd', state: touch, mode: '0600' }
-#     - { path: '{{ postgres_user_home }}/.pgpoolkey', state: absent, mode: '0600' }
-#     - { path: '{{ postgres_user_home }}/.pgpoolkey', state: touch, mode: '0600' }
-#   tags:
-#   - pgp_authentication
-
-# - name: create pgpoolkey file
-#   lineinfile:
-#     path: '{{ postgres_user_home }}/.pgpoolkey'
-#     line: |
-#       {{ postgres_user_pass }}
-#     state: present
-#   become_user: postgres
-#   tags:
-#     - pgp_authentication
-
-# - name: client authentication configuration - pool_pass
-#   shell: |
-#     /usr/bin/pg_enc -m -k {{ postgres_user_home }}/.pgpoolkey -u {{ item.name }} {{ item.pass }}
-#   become_user: postgres
-#   with_items:
-#     - { name: '{{ postgres_user_name }}', pass: '{{ postgres_user_pass }}' }
-#     - { name: '{{ postgres_pgpool_name }}', pass: '{{ postgres_pgpool_pass }} '}
-#   tags:
-#   - pgp_authentication
 
 - name: specify all pgpool nodes information for configuring watchdog
   lineinfile:

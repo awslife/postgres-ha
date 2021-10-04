@@ -16,8 +16,8 @@
     - wait
 
 - name: set hostname
-  hostname:
-    name: '{{ inventory_hostname }}'
+  shell: |
+    hostnamectl set-hostname '{{ inventory_hostname }}'
   tags:
   - hostname
 
